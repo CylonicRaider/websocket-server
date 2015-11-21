@@ -11,11 +11,19 @@ class WebSocketError(Exception):
     """
     pass
 
+class ConnectionClosingException(WebSocketError):
+    """
+    Raised if trying to write a message after close() was called.
+    """
+    pass
+
 class ProtocolError(WebSocketError):
     """
     Exception for failure of the other side to adher to the protocol.
+
+    May have an additional "code" attribute, containing the error code.
     """
-    pass
+    code = None
 
 class InvalidDataError(WebSocketError, ValueError):
     """

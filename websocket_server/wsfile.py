@@ -13,7 +13,7 @@ from collections import namedtuple
 
 from .compat import bytearray, bytes
 from .constants import *
-from .exceptions import ProtocolError, InvalidDataError
+from .exceptions import *
 from .tools import mask, new_mask
 
 __all__ = ['WebSocketFile']
@@ -78,10 +78,12 @@ class WebSocketFile(object):
     Class attributes:
     MAXFRAME    : Maximum frame payload length. May be overridden by
                   subclasses (or instances). Value is either an integer
-                  or None (indicating no limit).
+                  or None (indicating no limit). This is not enforced
+                  for outgoing messages.
     MAXCONTFRAME: Maximum length of a frame reconstructed from fragments.
                   May be overridden as well. The value has the same
-                  semantics as the one of MAXFRAME.
+                  semantics as the one of MAXFRAME. This is not enforced
+                  for outgoing messages as well.
 
     NOTE: This class reads exactly the amount of bytes needed, yet
           buffering of the underlying stream may cause frames to
@@ -139,6 +141,8 @@ class WebSocketFile(object):
         factory = codecs.getincrementaldecoder('utf-8')
         self._decoder = factory(errors='strict')
         self._cur_opcode = None
+        self._read_close = False
+        self._written_close = False
 
     def _read_raw(self, length):
         """
@@ -219,8 +223,7 @@ class WebSocketFile(object):
         """
         _write_raw(data) -> None
 
-        Write data to the underlying stream. May or may be not
-        buffered.
+        Write data to the underlying stream. May or may be not buffered.
         """
         self._wrfile.write(data)
 
@@ -228,7 +231,7 @@ class WebSocketFile(object):
         """
         _flush_raw() -> None
 
-        Force any buffered data to be written out.
+        Force any buffered output data to be written out.
         """
         self._wrfile.flush()
 
@@ -251,8 +254,10 @@ class WebSocketFile(object):
         is read, EOF inside an unfinished fragmented frame is
         encountered, etc.
         """
-        # Read opcode byte. A EOF here is non-fatal.
         with self.rdlock:
+            # Store for later.
+            was_read_close = self._read_close
+            # Read opcode byte. A EOF here is non-fatal.
             header = bytearray(2)
             try:
                 header[0] = self._read_raw(1)
@@ -324,7 +329,7 @@ class WebSocketFile(object):
                     # Validate length.
                     if length < 65536:
                         self._error('Invalid frame length encoding')
-                    elif length >= 4611686018427387905:
+                    elif length >= 4611686018427387904:
                         # MUST in RFC 6455, section 5.2
                         # We could handle those frames easily (given we have
                         # enough memory), though.
@@ -332,11 +337,15 @@ class WebSocketFile(object):
                     if masked: msk = buf[4:8]
                 # Validate length.
                 if self.MAXFRAME is not None and length > self.MAXFRAME:
-                    self._error('Frame too long')
+                    self._error('Frame too long',
+                                code=CLOSE_MESSAGE_TOO_BIG)
                 # Allocate result buffer.
                 rbuf = bytearray(length)
                 # Read rest of message.
                 self._readall_raw(rbuf)
+                # Verify this is not a post-close frame.
+                if was_read_close:
+                    self._error('Received frame after closing one')
                 # Reverse masking if necessary.
                 if masked: rbuf = mask(msk, rbuf)
                 # Done!
@@ -389,7 +398,8 @@ class WebSocketFile(object):
                 # Enforce MAXCONTFRAME
                 if (self.MAXCONTFRAME is not None and
                         buflen + len(payload) > self.MAXCONTFRAME):
-                    self._error('Fragmented frame too long')
+                    self._error('Fragmented frame too long',
+                                code=CLOSE_MESSAGE_TOO_BIG)
                 # Prepare value for returning.
                 datum = Message(fr.msgtype, payload, fr.final)
                 # Regard streaming mode.
@@ -417,6 +427,7 @@ class WebSocketFile(object):
         if opcode == OP_PING:
             self.write_single_frame(OP_PONG, cnt)
         elif opcode == OP_CLOSE:
+            self._read_close = True
             self.close(*self.parse_close(cnt))
 
     # Used internally.
@@ -425,16 +436,19 @@ class WebSocketFile(object):
         # Assure execution does not continue.
         raise RuntimeError('error() did return')
 
-    def error(self, message):
+    def error(self, message, code=CLOSE_PROTOCOL_FAILURE):
         """
-        error(message) -> [ProtocolError]
+        error(message, code=CLOSE_PROTOCOL_FAILURE) -> [ProtocolError]
 
         Initiate an abnormal connection close and raise a ProtocolError.
+        code is the error code to use.
         This method is called from read_single_frame() if an invalid
         frame is detected.
         """
-        self.close(CLOSE_PROTOCOL, message)
-        raise ProtocolError(message)
+        self.close(code, message)
+        exc = ProtocolError(message)
+        exc.code = code
+        raise exc
 
     def write_single_frame(self, opcode, data, final=True, mask=None):
         """
@@ -446,19 +460,107 @@ class WebSocketFile(object):
         if not None, is a length-four byte sequence that determines
         which mask to use, otherwise, tools.new_mask() will be invoked
         to create one if necessary.
-        If opcode is OP_TEXT, data must be a Unicode string, otherwise,
-        data must be a byte string, if it is not, TypeError is raised.
+        If opcode is OP_TEXT, data may be a Unicode or a byte string,
+        otherwise, data must be a byte string. If the type of data is
+        inappropriate, TypeError is raised.
+        May also raise TypeError or ValueError is the types of the
+        other arguments are invalid.
         """
-        raise NotImplementedError()
+        # Validate arguments.
+        if not isinstance(opcode, int):
+            raise TypeError('Invalid opcode type')
+        elif not OP_MIN <= opcode <= OP_MAX:
+            raise ValueError('Opcode out of range')
+        if isinstance(data, unicode):
+            if opcode != OP_TEXT:
+                raise TypeError('Unicode payload specfied for '
+                    'non-Unicode opcode')
+            data = data.encode('utf-8')
+        elif not isinstance(data, (bytes, bytearray)):
+            raise TypeError('Invalid payload type')
+        # Allocate new mask if necessary; validate type.
+        if mask is None:
+            if not self.server_side:
+                mask = new_mask()
+        elif isinstance(mask, bytes):
+            mask = bytearray(mask)
+        elif not isinstance(mask, bytearray):
+            raise TypeError('Invalid mask type')
+        # Construct message header.
+        header = bytearray(2)
+        masked = (not self.server_side)
+        if final: header[0] |= FLAG_FIN
+        if masked: header[1] |= FLAG_MASK
+        # Insert message length.
+        if len(data) < 126:
+            header[1] |= len(data)
+        elif len(data) < 65536:
+            header[1] |= 126
+            header.extend(struct.pack('!H', len(data)))
+        elif len(data) < 4611686018427387904:
+            header[1] |= 127
+            header.extend(struct.pack('!Q', len(data)))
+        else:
+            # WTF?
+            raise ValueError('Frame too long')
+        # Append masking key.
+        header.extend(mask)
+        # Drain all that onto the wire.
+        with self.wrlock:
+            if self._written_close:
+                raise ConnectionClosingException(
+                    'Trying to write data after close()')
+            self._write_raw(header)
+            self._write_raw(data)
+            self._flush_raw()
+
+    def write_frame(self, opcode, data):
+        """
+        write_frame(opcode, data) -> None
+
+        Write a complete data frame with given opcode and data.
+        Arguments are validated. May raise exceptions as
+        write_single_frame() does.
+        """
+        if opcode & OPMASK_CONTROL or opcode == OP_CONT:
+            raise ValueError('Trying to write non-data frame')
+        self.write_single_frame(opcode, data)
 
     def close(self, code=None, message=None):
         """
         close(code=None, message=None) -> None
 
         Close the underlying connection, delivering the code and message
-        (if given) to the other point.
+        (if given) to the other point. If code is None, message is
+        ignored. If message is a Unicode string, it is encoded using
+        UTF-8.
+        If the connection is already closed, the method has no effect.
         """
-        raise NotImplementedError()
+        # Construct payload.
+        payload = bytearray()
+        if code is not None:
+            # Add code.
+            payload.extend(struct.pack('!H', code))
+            # Add message.
+            if message is None:
+                pass
+            elif isinstance(message, unicode):
+                payload.extend(message.encode('utf-8'))
+            else:
+                payload.extend(message)
+        with self.wrlock:
+            # Already closed?
+            if self._written_close:
+                # Close underlying streams if necessary.
+                if self._read_close and self.close_wrapped:
+                    self.rdfile.close()
+                    self.wrfile.close()
+                # Anyway, won't write another frame.
+                return
+            # Write close frame.
+            self.write_single_frame(OP_CLOSE, payload)
+            # Close frame written.
+            self._written_close = True
 
     def parse_close(self, content):
         """
