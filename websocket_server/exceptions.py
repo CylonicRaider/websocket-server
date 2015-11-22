@@ -21,11 +21,20 @@ class ProtocolError(WebSocketError):
     """
     Exception for failure of the other side to adher to the protocol.
 
-    May have an additional "code" attribute, containing the error code.
+    The "code" attribute contains the error code, or None.
     """
-    code = None
+    def __init__(self, message, code=None):
+        """
+        __init__(message, code=None) -> None
 
-class InvalidDataError(WebSocketError, ValueError):
+        Initialize a ProtocolError instance. message is passed
+        to the superclass constructor, code is stored in the
+        same-named attribute.
+        """
+        WebSocketError.__init__(self, message)
+        self.code = code
+
+class InvalidDataError(ProtocolError, ValueError):
     """
     Invalid data; raised by wsfile.WebSocketFile.parse_close().
     """

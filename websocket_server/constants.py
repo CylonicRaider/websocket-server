@@ -47,6 +47,7 @@ MASK_LENGTH = 0x7F # Length mask inside its byte
 
 # Closing codes.
 
+# Individual constants
 CLOSE_NORMAL               = 1000
 CLOSE_GOING_AWAY           = 1001
 CLOSE_PROTOCOL_FAILURE     = 1002
@@ -59,3 +60,21 @@ CLOSE_MESSAGE_TOO_BIG      = 1009
 CLOSE_EXPECTED_EXTENSION   = 1010
 CLOSE_UNEXPECTED_CONDITION = 1011
 CLOSE_TLS_FAILURE          = 1015
+
+# Value-to-name mapping
+CLOSES = {CLOSE_NORMAL              : 'NORMAL',
+          CLOSE_GOING_AWAY          : 'GOING_AWAY',
+          CLOSE_PROTOCOL_FAILURE    : 'PROTOCOL_FAILURE',
+          CLOSE_UNACCEPTABLE_DATA   : 'UNACCEPTABLE_DATA',
+          CLOSE_NO_STATUS           : 'NO_STATUS',
+          CLOSE_ABNORMAL            : 'ABNORMAL',
+          CLOSE_INCONSISTENT_DATA   : 'INCONSISTENT_DATA',
+          CLOSE_POLICY_VIOLATION    : 'POLICY_VIOLATION',
+          CLOSE_MESSAGE_TOO_BIG     : 'MESSAGE_TOO_BIG',
+          CLOSE_EXPECTED_EXTENSION  : 'EXPECTED_EXTENSION',
+          CLOSE_UNEXPECTED_CONDITION: 'UNEXPECTED_CONDITION',
+          CLOSE_TLS_FAILURE         : 'TLS_FAILURE'}
+
+# Name-to-value mapping
+REV_CLOSES = {}
+for k, v in CLOSES.items(): REV_CLOSES[v] = k

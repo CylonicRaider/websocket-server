@@ -24,3 +24,8 @@ try:
 except NameError:
     # Py3K
     xrange = range
+
+try: # Py2K
+    from BaseHTTPServer import BaseHTTPRequestHandler
+except ImportError: # Py3K
+    from http.server import BaseHTTPRequestHandler

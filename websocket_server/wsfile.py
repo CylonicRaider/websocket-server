@@ -16,7 +16,7 @@ from .constants import *
 from .exceptions import *
 from .tools import mask, new_mask
 
-__all__ = ['WebSocketFile']
+__all__ = ['WebSocketFile', 'wrap']
 
 # Allocation unit.
 BUFFER_SIZE = 16384
@@ -291,7 +291,7 @@ class WebSocketFile(object):
                     if opcode == OP_CONT:
                         # Continuation frame.
                         msgtype = self._cur_opcode
-                        if self._cur_opcode not None:
+                        if self._cur_opcode is not None:
                             # See the error message.
                             self._error('Orphaned continuation frame')
                         elif final:
@@ -446,9 +446,7 @@ class WebSocketFile(object):
         frame is detected.
         """
         self.close(code, message)
-        exc = ProtocolError(message)
-        exc.code = code
-        raise exc
+        raise ProtocolError(message, code=code)
 
     def write_single_frame(self, opcode, data, final=True, mask=None):
         """
@@ -467,25 +465,19 @@ class WebSocketFile(object):
         other arguments are invalid.
         """
         # Validate arguments.
-        if not isinstance(opcode, int):
-            raise TypeError('Invalid opcode type')
-        elif not OP_MIN <= opcode <= OP_MAX:
+        if not OP_MIN <= opcode <= OP_MAX:
             raise ValueError('Opcode out of range')
         if isinstance(data, unicode):
             if opcode != OP_TEXT:
                 raise TypeError('Unicode payload specfied for '
                     'non-Unicode opcode')
             data = data.encode('utf-8')
-        elif not isinstance(data, (bytes, bytearray)):
-            raise TypeError('Invalid payload type')
         # Allocate new mask if necessary; validate type.
         if mask is None:
             if not self.server_side:
                 mask = new_mask()
         elif isinstance(mask, bytes):
             mask = bytearray(mask)
-        elif not isinstance(mask, bytearray):
-            raise TypeError('Invalid mask type')
         # Construct message header.
         header = bytearray(2)
         masked = (not self.server_side)
@@ -578,3 +570,23 @@ class WebSocketFile(object):
             raise InvalidDataError('Invalid close frame payload')
         else:
             return (struct.unpack('!H', content[:2]), content[2:])
+
+def wrap(*args, **kwds):
+    """
+    wrap(file1[, file2], **kwds) -> WebSocket
+
+    Try to wrap file1 and (if given) file2 into a WebSocket.
+    Convenience method for static factory methods.
+    """
+    if len(args) == 0:
+        raise TypeError('Cannot wrap nothing')
+    elif len(args) == 1:
+        f = args[0]
+        if hasattr(f, 'recv') and hasattr(f, 'send'):
+            return WebSocketFile.from_socket(f, **kwds)
+        else:
+            return WebSocketFile.from_file(f, **kwds)
+    elif len(args) == 2:
+        return WebSocketFile.from_files(args[0], args[1], **kwds)
+    else:
+        raise TypeError('Too many arguments')
