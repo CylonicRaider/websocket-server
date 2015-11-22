@@ -3,6 +3,10 @@
 
 """
 Example usage of the package.
+
+To run:
+- python3 -m websocket_server.examples
+- Open http://localhost:8080/ in your WebSocket-enabled Web browser.
 """
 
 import sys
