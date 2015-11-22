@@ -95,6 +95,7 @@ def parse_paramlist(string, allow_attributes=True):
                 raise ValueError('Invalid parameter list')
             # Create new entry.
             ret.append([m.group()])
+            offset = m.end()
     # Post-process list.
     if allow_attributes:
         return ret

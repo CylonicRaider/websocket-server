@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>WebSocket test page</title>
+    <style type="text/css">
+/* Centered block with the output and the input area. */
+body {
+  text-align: center;
+}
+form {
+  display: inline-block;
+}
+textarea, input {
+  box-sizing: border-box;
+  width: 100%;
+}
+/* Hacky appearance! */
+textarea, input, #prompt {
+  font-family: monospace;
+  font-size: 1em;
+}
+/* Put the prompt before the input. */
+#input-line {
+  display: table;
+  width: 100%;
+}
+#prompt, #input-wrapper {
+  display: table-cell;
+}
+#prompt {
+  width: 0;
+  white-space: pre;
+}
+    </style>
+    <script type="text/javascript">
+// Status variables.
+var ws = null, input, output;
+// Initialization.
+function init() {
+  // Initialize input and output.
+  input = document.getElementById("input");
+  output = document.getElementById("output");
+  input.focus();
+  output.value = ""; // Clear output area (in case it isn't).
+  // Connect the WebSocket.
+  var wsURL = "ws://" + document.location.host + "/echo";
+  println("CONNECT: " + wsURL);
+  ws = new WebSocket(wsURL);
+  // Install event handlers.
+  ws.onopen = function(event) {
+    println("CONNECTED");
+    console.info(event);
+  }
+  ws.onmessage = function(event) {
+    println("> " + event.data);
+  }
+  ws.onclose = function(event) {
+    println("CLOSED: code " + event.code + ", reason '" +
+      event.reason + "'");
+    console.info(event);
+  };
+  ws.onerror = function(event) {
+    println("ERROR");
+    console.error(event);
+  }
+}
+// Sending call-back
+function sendMessage() {
+  // Extract text from input; clear it.
+  var text = input.value;
+  input.value = "";
+  // Log outgoing message.
+  println("< " + text);
+  // Actually send it.
+  ws.send(text);
+  // Prevent page reload.
+  return false;
+}
+// Logging helper.
+function println(msg) {
+  output.value += msg + "\n";
+  output.scrollTop = output.scrollHeight;
+}
+    </script>
+  </head>
+  <body onload="init()">
+    <!-- Main container -->
+    <form onsubmit="return sendMessage()">
+      <!-- Heading -->
+      <h1>WebSocket test page</h1>
+      <!-- Output area -->
+      <textarea id="output" rows="25" cols="80"
+        readonly="readonly"></textarea>
+      <!-- Input area -->
+      <div id="input-line">
+        <span id="prompt">&gt; </span>
+        <span id="input-wrapper"><input id="input" type="text"/></span>
+      </div>
+    </form>
+  </body>
+</html>

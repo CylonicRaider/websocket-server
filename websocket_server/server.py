@@ -4,13 +4,13 @@
 """
 Server implementation.
 
-Relies on the standard library's BaseHTTPServer as the actual server.
+Relies on the standard library's HTTPServer as the actual server.
 """
 
 import base64
 import hashlib
 
-from .compat import BaseHTTPRequestHandler
+from .compat import unicode, BaseHTTPRequestHandler
 from .exceptions import ProtocolError
 from .wsfile import wrap
 from .tools import parse_paramlist
@@ -33,7 +33,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
     rbufsize = 0
 
     # The "magic" GUID used for Sec-WebSocket-Accept.
-    MAGIC_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    MAGIC_GUID = unicode('258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
 
     def handshake(self):
         """
@@ -44,6 +44,9 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         Raises ProtocolError if the request is not a valid WebSocket
         handshake.
         """
+        # Perform actual handshake.
+        self.perform_handshake()
+        # Wrap the stream in a WebSocket.
         return self.wrap()
 
     def perform_handshake(self):
@@ -63,7 +66,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
             self._error(message='Invalid/Missing Upgrade header')
         # Validate protocol version (why does the standard list that
         # as the last mandatory one?)
-        if self.headers.get('Sec-WebSocket-Version') != 13:
+        if self.headers.get('Sec-WebSocket-Version') != '13':
             self._error(message='Invalid WebSocket version (!= 13)')
         # (In particular, the Connection header.)
         connection = [i.lower().strip()
@@ -86,7 +89,11 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         self.process_extensions(exts)
         # Be permissive with subprotocol tokens.
         protstr = self.headers.get('Sec-WebSocket-Protocol', '')
-        protocols = [i.strip() for i in protstr.split(',')]
+        protstr = protstr.split()
+        if protstr:
+            protocols = [i.strip() for i in protstr.split(',')]
+        else:
+            protocols = []
         self.process_subprotocols(protocols)
         # Allow any post-processing.
         self.postprocess_handshake()
@@ -94,8 +101,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         self.send_response(101)
         self.handshake_reply(key, exts, protocols)
         self.end_headers()
-        # Handshake done, can construct actual WebSocket.
-        return self.wrap()
+        self.wfile.flush()
 
     def process_extensions(self, exts):
         """
@@ -103,11 +109,11 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
 
         Process the given extension requests.
         exts is a parameter list as returned by tools.parse_paramlist().
-        The default implementation rejects the request if a non-supported
-        extension (i.e., any extension at all) is present.
+        The default implementation discards all the extension requests.
         May call error() to reject a request.
+        Extending classes must send the reply header themself.
         """
-        if exts: self._error(message='Unsupported extensions present')
+        pass
 
     def process_subprotocols(self, prots):
         """
@@ -118,6 +124,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         The default implementation rejects the request if a non-supported
         subprotocol (i.e., any subprotocol at all) is present.
         May call error() to reject a request.
+        Extending classes must send the reply header themself.
         """
         if prots: self._error(message='Unsupported subprotocols present')
 
@@ -146,8 +153,11 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         end_headers() must not be called; that happens in
         perform_handshake().
         """
-        key_reply = base64.b64encode(hashlib.sha1(key +
-            self.MAGIC_GUID).digest())
+        enc_key = (unicode(key) + self.MAGIC_GUID).encode('ascii')
+        key_reply = base64.b64encode(hashlib.sha1(enc_key).digest())
+        key_reply = key_reply.decode('ascii')
+        self.send_header('Upgrade', 'websocket')
+        self.send_header('Connection', 'Upgrade')
         self.send_header('Sec-WebSocket-Accept', key_reply)
 
     def wrap(self):
@@ -157,7 +167,10 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         Wrap this handler's connection into a server-side WebSocketFile.
         The default implementation calls wsfile.wrap().
         """
-        return wrap(self.rfile, self.wfile, server_side=True)
+        ws = wrap(self.rfile, self.wfile, server_side=True)
+        # Is done in self.finish().
+        ws.close_wrapped = False
+        return ws
 
     # Used internally.
     def _error(self, code=400, message=None):
@@ -178,7 +191,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         if message is not None:
             enc = message.encode('utf-8')
             self.send_header('Content-Type', 'text/plain; charset=utf-8')
-            self.send_header('Content-Length', len(env))
+            self.send_header('Content-Length', len(enc))
             self.end_headers()
             self.wfile.write(enc)
             self.wfile.flush()

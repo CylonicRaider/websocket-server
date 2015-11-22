@@ -39,3 +39,9 @@ class InvalidDataError(ProtocolError, ValueError):
     Invalid data; raised by wsfile.WebSocketFile.parse_close().
     """
     pass
+
+class ConnectionClosedError(WebSocketError):
+    """
+    Connection already closed.
+    """
+    pass

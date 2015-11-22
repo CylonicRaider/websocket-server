@@ -7,11 +7,12 @@ WebSocket protocol implementation.
 See the WebSocketFile class for more information.
 """
 
+import struct
 import codecs
 import threading
 from collections import namedtuple
 
-from .compat import bytearray, bytes
+from .compat import bytearray, bytes, unicode
 from .constants import *
 from .exceptions import *
 from .tools import mask, new_mask
@@ -260,7 +261,7 @@ class WebSocketFile(object):
             # Read opcode byte. A EOF here is non-fatal.
             header = bytearray(2)
             try:
-                header[0] = self._read_raw(1)
+                header[0] = ord(self._read_raw(1))
             except EOFError:
                 if self._cur_opcode is not None:
                     self._error('Unfinished fragmented frame')
@@ -268,17 +269,17 @@ class WebSocketFile(object):
             # ...And EOF from here on, on the other hand, is.
             try:
                 # Read the length byte.
-                header[1] = self._read_raw(1)
+                header[1] = ord(self._read_raw(1))
                 # Extract header fields.
                 final = header[0] & FLAG_FIN
-                reserved = header[0] & FLAGS_RSV
+                reserved = header[0] & MASK_RSV
                 opcode = header[0] & MASK_OPCODE
                 masked = header[1] & FLAG_MASK
                 length = header[1] & MASK_LENGTH
                 # Verify them.
                 if reserved:
                     self._error('Frame with reserved flags received')
-                if not bool(self.server_side) ^ bool(masked):
+                if bool(self.server_side) ^ bool(masked):
                     self._error('Frame with invalid masking received')
                 if opcode & OPMASK_CONTROL and not final:
                     self._error('Fragmented control frame received')
@@ -311,11 +312,8 @@ class WebSocketFile(object):
                 # buffer.
                 masklen = (4 if masked else 0)
                 if length < 126:
-                    buf = self._readinto_raw(masklen + length)
-                    if masked:
-                        return mask(buf[:4], buf[4:])
-                    else:
-                        return buf
+                    # Just read the mask if necessary.
+                    msk = self._readinto_raw(masklen)
                 elif length == 126:
                     buf = self._readinto_raw(2 + masklen)
                     length = struct.unpack('!H', buf[:2])
@@ -324,7 +322,7 @@ class WebSocketFile(object):
                         self._error('Invalid frame length encoding')
                     if masked: msk = buf[2:6]
                 elif length == 127:
-                    buf = self._readall_raw(4 + masklen)
+                    buf = self._readinto_raw(4 + masklen)
                     length = struct.unpack('!Q', buf[:4])
                     # Validate length.
                     if length < 65536:
@@ -342,7 +340,7 @@ class WebSocketFile(object):
                 # Allocate result buffer.
                 rbuf = bytearray(length)
                 # Read rest of message.
-                self._readall_raw(rbuf)
+                if length != 0: self._readinto_raw(rbuf)
                 # Verify this is not a post-close frame.
                 if was_read_close:
                     self._error('Received frame after closing one')
@@ -384,7 +382,7 @@ class WebSocketFile(object):
                 if not fr: return None
                 # Process control frames as quickly as possible.
                 if fr.opcode & OPMASK_CONTROL:
-                    self.handle_control(fr.opcode, fr.data)
+                    self.handle_control(fr.opcode, fr.payload)
                     continue
                 # Decode text frames.
                 if fr.opcode == OP_TEXT:
@@ -428,7 +426,7 @@ class WebSocketFile(object):
             self.write_single_frame(OP_PONG, cnt)
         elif opcode == OP_CLOSE:
             self._read_close = True
-            self.close(*self.parse_close(cnt))
+            self.close_ex(*self.parse_close(cnt))
 
     # Used internally.
     def _error(self, message):
@@ -445,7 +443,7 @@ class WebSocketFile(object):
         This method is called from read_single_frame() if an invalid
         frame is detected.
         """
-        self.close(code, message)
+        self.close_ex(code, message)
         raise ProtocolError(message, code=code)
 
     def write_single_frame(self, opcode, data, final=True, mask=None):
@@ -483,6 +481,7 @@ class WebSocketFile(object):
         masked = (not self.server_side)
         if final: header[0] |= FLAG_FIN
         if masked: header[1] |= FLAG_MASK
+        header[0] |= opcode
         # Insert message length.
         if len(data) < 126:
             header[1] |= len(data)
@@ -496,11 +495,11 @@ class WebSocketFile(object):
             # WTF?
             raise ValueError('Frame too long')
         # Append masking key.
-        header.extend(mask)
+        if mask: header.extend(mask)
         # Drain all that onto the wire.
         with self.wrlock:
             if self._written_close:
-                raise ConnectionClosingException(
+                raise ConnectionClosedError(
                     'Trying to write data after close()')
             self._write_raw(header)
             self._write_raw(data)
@@ -518,9 +517,9 @@ class WebSocketFile(object):
             raise ValueError('Trying to write non-data frame')
         self.write_single_frame(opcode, data)
 
-    def close(self, code=None, message=None):
+    def close_ex(self, code=None, message=None):
         """
-        close(code=None, message=None) -> None
+        close_ex(code=None, message=None) -> None
 
         Close the underlying connection, delivering the code and message
         (if given) to the other point. If code is None, message is
@@ -545,14 +544,23 @@ class WebSocketFile(object):
             if self._written_close:
                 # Close underlying streams if necessary.
                 if self._read_close and self.close_wrapped:
-                    self.rdfile.close()
-                    self.wrfile.close()
+                    self._rdfile.close()
+                    self._wrfile.close()
                 # Anyway, won't write another frame.
                 return
             # Write close frame.
             self.write_single_frame(OP_CLOSE, payload)
             # Close frame written.
             self._written_close = True
+
+    def close(self, message=None):
+        """
+        close(message=None) -> None
+
+        Close the underlying connection with a code of CLOSE_NORMAL
+        and the (optional) given message.
+        """
+        self.close_ex(CLOSE_NORMAL, message)
 
     def parse_close(self, content):
         """
@@ -569,7 +577,7 @@ class WebSocketFile(object):
         elif len(content) == 1:
             raise InvalidDataError('Invalid close frame payload')
         else:
-            return (struct.unpack('!H', content[:2]), content[2:])
+            return (struct.unpack('!H', content[:2])[0], content[2:])
 
 def wrap(*args, **kwds):
     """
