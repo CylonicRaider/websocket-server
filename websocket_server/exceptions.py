@@ -5,15 +5,12 @@
 Exceptions.
 """
 
+__all__ = ['WebSocketError', 'ProtocolError', 'InvalidDataError',
+           'ConnectionClosedError']
+
 class WebSocketError(Exception):
     """
     Base class for all exceptions.
-    """
-    pass
-
-class ConnectionClosingException(WebSocketError):
-    """
-    Raised if trying to write a message after close() was called.
     """
     pass
 
@@ -36,12 +33,12 @@ class ProtocolError(WebSocketError):
 
 class InvalidDataError(ProtocolError, ValueError):
     """
-    Invalid data; raised by wsfile.WebSocketFile.parse_close().
+    Invalid data has been encountered.
     """
     pass
 
 class ConnectionClosedError(WebSocketError):
     """
-    Connection already closed.
+    Raised if trying to write a message after the connection closed.
     """
     pass

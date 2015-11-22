@@ -2,7 +2,7 @@
 # https://github.com/CylonicRaider/websocket-server
 
 """
-Examples.
+Example usage of the package.
 """
 
 import sys
@@ -13,6 +13,10 @@ try:
     from BaseHTTPServer import HTTPServer
 except ImportError:
     from http.server import HTTPServer
+try:
+    from SocketServer import ThreadingMixIn
+except ImportError:
+    from socketserver import ThreadingMixIn
 
 from .exceptions import ProtocolError
 from .server import WebSocketRequestHandler
@@ -48,6 +52,7 @@ class EchoRequestHandler(WebSocketRequestHandler):
                     self.log_error(repr(exc))
                     break
         elif self.path == '/':
+            # Display HTML test page.
             page = pkgutil.get_data(__package__, 'testpage.html')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -55,11 +60,15 @@ class EchoRequestHandler(WebSocketRequestHandler):
             self.end_headers()
             self.wfile.write(page)
         else:
+            # Minimalistic 404 response.
             self.send_response(404)
             self.send_header('Content-Type', 'text/plain; charset=utf-8')
             self.send_header('Content-Length', len(NOT_FOUND))
             self.end_headers()
             self.wfile.write(NOT_FOUND)
+
+# Multi-threaded HTTP server.
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer): pass
 
 def main():
     # Parse command-line arguments.
@@ -70,7 +79,7 @@ def main():
                  metavar='PORT')
     options, arguments = p.parse_args()
     # Create server.
-    httpd = HTTPServer(('', options.port), EchoRequestHandler)
+    httpd = ThreadingHTTPServer(('', options.port), EchoRequestHandler)
     # Print status message.
     sys.stderr.write('Serving HTTP on port %s...\n' % options.port)
     sys.stderr.flush()

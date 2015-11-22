@@ -459,8 +459,8 @@ class WebSocketFile(object):
         If opcode is OP_TEXT, data may be a Unicode or a byte string,
         otherwise, data must be a byte string. If the type of data is
         inappropriate, TypeError is raised.
-        May also raise TypeError or ValueError is the types of the
-        other arguments are invalid.
+        Raises ConnectionClosedError is the connection is already
+        closed or closing.
         """
         # Validate arguments.
         if not OP_MIN <= opcode <= OP_MAX:
