@@ -19,7 +19,7 @@ Use the usual methods, like cloning the repository and running `setup.py install
 
 After having installed the library (or having it available locally otherwise), run
 
-    python3 -m websocket_server
+    python3 -m websocket_server.examples
 
 in a command line, and navigate your WebSocket-enabled Web browser to
 [http://localhost:8080/](http://localhost:8080/).
