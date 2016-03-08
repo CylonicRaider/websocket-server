@@ -517,6 +517,24 @@ class WebSocketFile(object):
             raise ValueError('Trying to write non-data frame')
         self.write_single_frame(opcode, data)
 
+    def write_text_frame(self, data):
+        """
+        write_text_frame(data) -> None
+
+        Write an OP_TEXT frame with given data, which must be a Unicode
+        string.
+        """
+        if not isinstance(data, unicode): raise TypeError('Invalid data')
+        return self.write_frame(OP_TEXT, data)
+
+    def write_binary_frame(self, data):
+        """
+        write_binary_frame(data) -> None
+
+        Write an OP_BINARY frame with given data.
+        """
+        return self.write_frame(OP_BINARY, data)
+
     def close_ex(self, code=None, message=None):
         """
         close_ex(code=None, message=None) -> None
