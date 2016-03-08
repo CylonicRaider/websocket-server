@@ -9,21 +9,11 @@ To run:
 - Open http://localhost:8080/ in your WebSocket-enabled Web browser.
 """
 
-import sys
-import optparse
 import pkgutil
-
-try:
-    from BaseHTTPServer import HTTPServer
-except ImportError:
-    from http.server import HTTPServer
-try:
-    from SocketServer import ThreadingMixIn
-except ImportError:
-    from socketserver import ThreadingMixIn
 
 from .exceptions import ProtocolError
 from .server import WebSocketRequestHandler
+from .quick import run
 
 # "Page" to display in case of a 404.
 NOT_FOUND = b'404 Not Found'
@@ -71,27 +61,10 @@ class EchoRequestHandler(WebSocketRequestHandler):
             self.end_headers()
             self.wfile.write(NOT_FOUND)
 
-# Multi-threaded HTTP server.
-class ThreadingHTTPServer(ThreadingMixIn, HTTPServer): pass
-
 def main():
-    # Parse command-line arguments.
-    p = optparse.OptionParser()
-    p.add_option('-p', '--port', dest='port', type='int',
-                 default=8080,
-                 help='Specify the port to run on.',
-                 metavar='PORT')
-    options, arguments = p.parse_args()
-    # Create server.
-    httpd = ThreadingHTTPServer(('', options.port), EchoRequestHandler)
-    # Print status message.
-    sys.stderr.write('Serving HTTP on port %s...\n' % options.port)
-    sys.stderr.flush()
-    # Run it.
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        # Don't print a noisy stack trace if Ctrl+C'ed.
-        pass
+    """
+    Run the example. Uses the run() function from the quick module.
+    """
+    run(EchoRequestHandler)
 
 if __name__ == '__main__': main()

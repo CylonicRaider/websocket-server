@@ -23,7 +23,7 @@ __version__ = '1.0'
 # Auxillary modules
 from . import compat, constants, exceptions, tools
 # Main modules
-from . import examples, server, wsfile
+from . import examples, quick, server, wsfile
 
 __all__ = exceptions.__all__ + ['WebSocketFile', 'wrap',
                                 'WebSocketRequestHandler']
