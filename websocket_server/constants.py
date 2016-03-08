@@ -78,3 +78,8 @@ CLOSES = {CLOSE_NORMAL              : 'NORMAL',
 # Name-to-value mapping
 REV_CLOSES = {}
 for k, v in CLOSES.items(): REV_CLOSES[v] = k
+
+# Values interesting for an import *.
+__all__ = (['OP_%s' % i for i in REV_OPCODES.keys()] +
+           ['CLOSE_%s' % i for i in REV_CLOSES.keys()] +
+           ['OPCODES', 'REV_OPCODES', 'CLOSES', 'REV_CLOSES'])
