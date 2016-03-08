@@ -25,9 +25,10 @@ from . import compat, constants, exceptions, tools
 # Main modules
 from . import examples, quick, server, wsfile
 
-__all__ = exceptions.__all__ + ['WebSocketFile', 'wrap',
-                                'WebSocketRequestHandler']
+__all__ = constants.__all__ + exceptions.__all__
+__all__ += ['WebSocketFile', 'wrap', 'WebSocketRequestHandler']
 
+from .constants import *
 from .exceptions import *
 from .wsfile import WebSocketFile, wrap
 from .server import WebSocketRequestHandler
