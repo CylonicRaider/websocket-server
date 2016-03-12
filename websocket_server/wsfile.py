@@ -12,8 +12,8 @@ import codecs
 import threading
 from collections import namedtuple
 
+from . import constants
 from .compat import bytearray, bytes, unicode
-from .constants import *
 from .exceptions import *
 from .tools import mask, new_mask
 
@@ -271,25 +271,25 @@ class WebSocketFile(object):
                 # Read the length byte.
                 header[1] = ord(self._read_raw(1))
                 # Extract header fields.
-                final = header[0] & FLAG_FIN
-                reserved = header[0] & MASK_RSV
-                opcode = header[0] & MASK_OPCODE
-                masked = header[1] & FLAG_MASK
-                length = header[1] & MASK_LENGTH
+                final = header[0] & constants.FLAG_FIN
+                reserved = header[0] & constants.MASK_RSV
+                opcode = header[0] & constants.MASK_OPCODE
+                masked = header[1] & constants.FLAG_MASK
+                length = header[1] & constants.MASK_LENGTH
                 # Verify them.
                 if reserved:
                     self._error('Frame with reserved flags received')
                 if bool(self.server_side) ^ bool(masked):
                     self._error('Frame with invalid masking received')
-                if opcode & OPMASK_CONTROL and not final:
+                if opcode & constants.OPMASK_CONTROL and not final:
                     self._error('Fragmented control frame received')
                 # (Fragmented) Message type.
                 msgtype = opcode
                 # Validate fragmentation state.
-                if not opcode & OPMASK_CONTROL:
+                if not opcode & constants.OPMASK_CONTROL:
                     # Control frames may pass freely, non-control ones
                     # interact with the state.
-                    if opcode == OP_CONT:
+                    if opcode == constants.OP_CONT:
                         # Continuation frame.
                         msgtype = self._cur_opcode
                         if self._cur_opcode is not None:
@@ -336,7 +336,7 @@ class WebSocketFile(object):
                 # Validate length.
                 if self.MAXFRAME is not None and length > self.MAXFRAME:
                     self._error('Frame too long',
-                                code=CLOSE_MESSAGE_TOO_BIG)
+                                code=constants.CLOSE_MESSAGE_TOO_BIG)
                 # Allocate result buffer.
                 rbuf = bytearray(length)
                 # Read rest of message.
@@ -381,11 +381,11 @@ class WebSocketFile(object):
                 # EOF reached. Assuming state is clean.
                 if not fr: return None
                 # Process control frames as quickly as possible.
-                if fr.opcode & OPMASK_CONTROL:
+                if fr.opcode & constants.OPMASK_CONTROL:
                     self.handle_control(fr.opcode, fr.payload)
                     continue
                 # Decode text frames.
-                if fr.opcode == OP_TEXT:
+                if fr.opcode == constants.OP_TEXT:
                     try:
                         payload = self._decoder.decode(fr.payload,
                                                        fr.final)
@@ -397,7 +397,7 @@ class WebSocketFile(object):
                 if (self.MAXCONTFRAME is not None and
                         buflen + len(payload) > self.MAXCONTFRAME):
                     self._error('Fragmented frame too long',
-                                code=CLOSE_MESSAGE_TOO_BIG)
+                                code=constants.CLOSE_MESSAGE_TOO_BIG)
                 # Prepare value for returning.
                 datum = Message(fr.msgtype, payload, fr.final)
                 # Regard streaming mode.
@@ -408,7 +408,7 @@ class WebSocketFile(object):
                 buflen += len(datum.content)
                 # Stop if final message encountered.
                 if datum.final:
-                    if datum.msgtype == OP_TEXT:
+                    if datum.msgtype == constants.OP_TEXT:
                         base = unicode()
                     else:
                         base = bytes()
@@ -422,9 +422,9 @@ class WebSocketFile(object):
         Called by read_frame() if a control frame is read, to evoke a
         required response "as soon as practical".
         """
-        if opcode == OP_PING:
-            self.write_single_frame(OP_PONG, cnt)
-        elif opcode == OP_CLOSE:
+        if opcode == constants.OP_PING:
+            self.write_single_frame(constants.OP_PONG, cnt)
+        elif opcode == constants.OP_CLOSE:
             self._read_close = True
             self.close_ex(*self.parse_close(cnt))
 
@@ -434,7 +434,7 @@ class WebSocketFile(object):
         # Assure execution does not continue.
         raise RuntimeError('error() did return')
 
-    def error(self, message, code=CLOSE_PROTOCOL_FAILURE):
+    def error(self, message, code=constants.CLOSE_PROTOCOL_FAILURE):
         """
         error(message, code=CLOSE_PROTOCOL_FAILURE) -> [ProtocolError]
 
@@ -463,10 +463,10 @@ class WebSocketFile(object):
         closed or closing.
         """
         # Validate arguments.
-        if not OP_MIN <= opcode <= OP_MAX:
+        if not constants.OP_MIN <= opcode <= constants.OP_MAX:
             raise ValueError('Opcode out of range')
         if isinstance(data, unicode):
-            if opcode != OP_TEXT:
+            if opcode != constants.OP_TEXT:
                 raise TypeError('Unicode payload specfied for '
                     'non-Unicode opcode')
             data = data.encode('utf-8')
@@ -479,8 +479,8 @@ class WebSocketFile(object):
         # Construct message header.
         header = bytearray(2)
         masked = (not self.server_side)
-        if final: header[0] |= FLAG_FIN
-        if masked: header[1] |= FLAG_MASK
+        if final: header[0] |= constants.FLAG_FIN
+        if masked: header[1] |= constants.FLAG_MASK
         header[0] |= opcode
         # Insert message length.
         if len(data) < 126:
@@ -513,7 +513,7 @@ class WebSocketFile(object):
         Arguments are validated. May raise exceptions as
         write_single_frame() does.
         """
-        if opcode & OPMASK_CONTROL or opcode == OP_CONT:
+        if opcode & constants.OPMASK_CONTROL or opcode == constants.OP_CONT:
             raise ValueError('Trying to write non-data frame')
         self.write_single_frame(opcode, data)
 
@@ -525,7 +525,7 @@ class WebSocketFile(object):
         string.
         """
         if not isinstance(data, unicode): raise TypeError('Invalid data')
-        return self.write_frame(OP_TEXT, data)
+        return self.write_frame(constants.OP_TEXT, data)
 
     def write_binary_frame(self, data):
         """
@@ -533,7 +533,7 @@ class WebSocketFile(object):
 
         Write an OP_BINARY frame with given data.
         """
-        return self.write_frame(OP_BINARY, data)
+        return self.write_frame(constants.OP_BINARY, data)
 
     def close_ex(self, code=None, message=None):
         """
@@ -567,7 +567,7 @@ class WebSocketFile(object):
                 # Anyway, won't write another frame.
                 return
             # Write close frame.
-            self.write_single_frame(OP_CLOSE, payload)
+            self.write_single_frame(constants.OP_CLOSE, payload)
             # Close frame written.
             self._written_close = True
 
@@ -578,7 +578,7 @@ class WebSocketFile(object):
         Close the underlying connection with a code of CLOSE_NORMAL
         and the (optional) given message.
         """
-        self.close_ex(CLOSE_NORMAL, message)
+        self.close_ex(constants.CLOSE_NORMAL, message)
 
     def parse_close(self, content):
         """
