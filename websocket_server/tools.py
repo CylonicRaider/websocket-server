@@ -43,7 +43,7 @@ QSTRING_RE = re.compile(r'"([^"]|\\.)*"')
 LWS_RE = re.compile('\s+')
 
 # Complete parameter regex.
-PARAM_RE = re.compile(r'\s+(%s)\s+=\s+(%s|%s)\s+' % (TOKEN_RE.pattern,
+PARAM_RE = re.compile(r'\s*(%s)\s*(=\s*(%s|%s)\s*)?' % (TOKEN_RE.pattern,
     TOKEN_RE.pattern, QSTRING_RE.pattern))
 
 def parse_paramlist(string, allow_attributes=True):
@@ -78,24 +78,29 @@ def parse_paramlist(string, allow_attributes=True):
                 in_params = False
                 continue
             elif string[offset] != ';':
-                raise ValueError('Invalid parameter list')
+                raise ValueError('Invalid parameter list: %r' % (string,))
             # Enforce allow_attributes
             if not allow_attributes:
-                raise ValueError('Attributes not allowed')
+                raise ValueError('Attributes not allowed (%r)' % (string,))
             # ...Append another parameter.
             m = PARAM_RE.match(string, offset + 1)
             if not m:
-                raise ValueError('Invalid parameter list')
-            ret[-1].append(m.group(1) + '=' + m.group(2))
+                raise ValueError('Invalid parameter list: %r' % (string,))
+            if m.group(2):
+                ret[-1].append(m.group(1) + '=' + m.group(3))
+            else:
+                ret[-1].append(m.group(1))
             offset = m.end()
         else:
             # Match another "top-level" value.
             m = TOKEN_RE.match(string, offset)
             if not m:
-                raise ValueError('Invalid parameter list')
+                raise ValueError('Invalid parameter list: %r' % (string,))
             # Create new entry.
             ret.append([m.group()])
             offset = m.end()
+            # Possible parameters following
+            in_params = True
     # Post-process list.
     if allow_attributes:
         return ret
