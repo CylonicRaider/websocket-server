@@ -10,7 +10,7 @@ Relies on the standard library's HTTPServer as the actual server.
 import base64
 import hashlib
 
-from .compat import unicode, BaseHTTPRequestHandler
+from .compat import unicode, tobytes, BaseHTTPRequestHandler
 from .exceptions import ProtocolError
 from .wsfile import wrap
 from .tools import parse_paramlist
@@ -76,7 +76,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         # Validate the key.
         key = self.headers.get('Sec-WebSocket-Key')
         try:
-            if len(base64.b64decode(key)) != 16:
+            if len(base64.b64decode(tobytes(key))) != 16:
                 self._error(message='Invalid WebSocket key length')
         except TypeError:
             self._error(message='Invalid WebSocket key')

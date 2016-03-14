@@ -25,6 +25,15 @@ except NameError:
     # Py3K
     xrange = range
 
+import sys as _sys
+if _sys.version_info[0] < 2:
+    def tobytes(s):
+        return s
+else:
+    def tobytes(s):
+        return bytes(s, 'utf-8')
+del _sys
+
 try: # Py2K
     from BaseHTTPServer import BaseHTTPRequestHandler
 except ImportError: # Py3K
