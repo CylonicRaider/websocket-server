@@ -58,8 +58,9 @@ class FileCache:
               virtual path as only argument to determing whether the request
               is valid or should be rejected; if not callable, a membership
               test will be performed (like, path in filter) to determine
-              whether the access should be allowed. This way, either a call-
-              back or a precomputed list can be specified.
+              whether the access should be allowed; this way, either a call-
+              back or a precomputed list can be specified. A filter of None
+              admits all paths.
 
     Keyword-only parameters:
     override_cnttypes: If true, the class attribute CNTTYPES will not be
@@ -239,7 +240,9 @@ class FileCache:
         arguments are passed to either self.webroot (if that is called),
         or to the class-level read() method.
         """
-        if callable(self.filter):
+        if self.filter is None:
+            pass
+        elif callable(self.filter):
             if not self.filter(path): return None
         else:
             if path not in self.filter: return None
