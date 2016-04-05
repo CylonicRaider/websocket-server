@@ -43,9 +43,12 @@ class FileCache:
     Helper for caching and delivering static files.
 
     Constructor parameters (taken over as attributes):
-    webroot : Base directory to resolve paths against, as a string. If
-              callable, it is expected to produce Entries for the path
-              given as the only positional argument.
+    webroot : Base directory to resolve paths against, as a string; if a
+              dictionary, expected to be a path-filename mapping similarly
+              to the string option (relative filenames are resolved relative
+              to the current working directory); if callable, it is expected
+              to produce Entries (or None-s) for the path given as the only
+              positional argument;
     cnttypes: Mapping of filename extensions (with period) to MIME types.
               None (the default) is cast to an empty dictionary. Unless
               override_cnttypes is true, the class-level CNTTYPES
@@ -236,20 +239,26 @@ class FileCache:
         arguments are passed to either self.webroot (if that is called),
         or to the class-level read() method.
         """
+        if callable(self.filter):
+            if not self.filter(path): return None
+        else:
+            if path not in self.filter: return None
         with self:
-            if callable(self.filter):
-                if not self.filter(path): return None
-            else:
-                if path not in self.filter: return None
             ent = self.entries.get(path)
             if ent:
                 ent = ent.validate()
             elif callable(self.webroot):
                 ent = self.webroot(path, **kwds)
             else:
-                source = path
-                if source[:1] in '/\\': source = source[1:]
-                source = os.path.join(self.webroot, source)
+                if isinstance(self.webroot, dict):
+                    try:
+                        source = self.webroot[path]
+                    except KeyError:
+                        return None
+                else:
+                    source = path
+                    if source[:1] in '/\\': source = source[1:]
+                    source = os.path.join(self.webroot, source)
                 ent = self.Entry.read(self, path, source, **kwds)
             self.entries[path] = ent
             return ent
