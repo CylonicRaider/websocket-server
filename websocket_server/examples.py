@@ -13,7 +13,7 @@ import pkgutil
 
 from .exceptions import ProtocolError
 from .server import WebSocketRequestHandler
-from .quick import run
+from .quick import FileCache, run
 
 # "Page" to display in case of a 404.
 NOT_FOUND = b'404 Not Found'

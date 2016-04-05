@@ -38,11 +38,11 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 class FileCache:
     """
-    FileCache(webroot, cnttypes=None, **config) -> new instance
+    FileCache(webroot, cnttypes=None, filter=None, **config) -> new instance
 
     Helper for caching and delivering static files.
 
-    Constructor parameters:
+    Constructor parameters (taken over as attributes):
     webroot : Base directory to resolve paths against, as a string. If
               callable, it is expected to produce Entries for the path
               given as the only positional argument.
@@ -50,11 +50,23 @@ class FileCache:
               None (the default) is cast to an empty dictionary. Unless
               override_cnttypes is true, the class-level CNTTYPES
               attribute is merged to amend missing keys.
+    filter  : A callable or a container for whitelisting paths. If callable,
+              this is called before every access to a resource with the
+              virtual path as only argument to determing whether the request
+              is valid or should be rejected; if not callable, a membership
+              test will be performed (like, path in filter) to determine
+              whether the access should be allowed. This way, either a call-
+              back or a precomputed list can be specified.
 
     Keyword-only parameters:
     override_cnttypes: If true, the class attribute CNTTYPES will not be
                        considered while creating the content type mapping
-                       (default is false).
+                       (default is false; not taken over as an attribute).
+
+    Other attributes:
+    entries: A mapping of paths to Entry-s.
+    lock   : A threading.RLock instance protecting entries. "with self"
+             may be used instead.
 
     Class attributes:
     CNTTYPES: Default content type mapping. Contains values for .txt,
@@ -193,15 +205,16 @@ class FileCache:
             if send_full:
                 handler.wfile.write(self.data)
 
-    def __init__(self, webroot, cnttypes=None, **config):
+    def __init__(self, webroot, cnttypes=None, filter=None, **config):
         """
-        __init__(webroot, cnttypes=None, **config) -> None
+        __init__(webroot, cnttypes=None, filter=None, **config) -> None
 
         See the class docstring for details.
         """
         if cnttypes is None: cnttypes = {}
         self.webroot = webroot
         self.cnttypes = cnttypes
+        self.filter = filter
         self.entries = {}
         if not config.get('override_cnttypes'):
             for k, v in self.CNTTYPES.items():
@@ -218,11 +231,16 @@ class FileCache:
         get(path, **kwds) -> Entry
 
         Get an Entry for the given path. Either validate a cached one,
-        or create a new one. Keyword arguments are passed to either
-        self.webroot (if that is called), or to the class-level read()
-        method.
+        or create a new one. If the path does not pass self.filter, None
+        is returned without performing any further action. Keyword
+        arguments are passed to either self.webroot (if that is called),
+        or to the class-level read() method.
         """
         with self:
+            if callable(self.filter):
+                if not self.filter(path): return None
+            else:
+                if path not in self.filter: return None
             ent = self.entries.get(path)
             if ent:
                 ent = ent.validate()
