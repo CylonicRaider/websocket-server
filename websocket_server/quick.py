@@ -150,8 +150,10 @@ class FileCache:
             self.cnttype = cnttype
             self.source = source
             scnt, supd = str(cnttype), str(updated)
-            self.etag = hashlib.md5(('%s,%s;%s,%s;' % (len(scnt), len(supd),
-                scnt, supd)).encode('ascii')).update(data).hexdigest()
+            h = hashlib.md5(('%s,%s;%s,%s;' % (len(scnt), len(supd),
+                scnt, supd)).encode('ascii'))
+            h.update(data)
+            self.etag = h.hexdigest()
 
         def validate(self):
             """
