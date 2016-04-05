@@ -52,8 +52,9 @@ class FileCache:
               attribute is merged to amend missing keys.
 
     Keyword-only parameters:
-    merge_cnttypes: If true, the class attribute CNTTYPES will not be
-                    considered while creating the content type mapping.
+    override_cnttypes: If true, the class attribute CNTTYPES will not be
+                       considered while creating the content type mapping
+                       (default is false).
 
     Class attributes:
     CNTTYPES: Default content type mapping. Contains values for .txt,
@@ -192,15 +193,19 @@ class FileCache:
             if send_full:
                 handler.wfile.write(self.data)
 
-    def __init__(self, webroot, cnttypes=None):
+    def __init__(self, webroot, cnttypes=None, **config):
         """
-        __init__(webroot, cnttypes=None) -> None
+        __init__(webroot, cnttypes=None, **config) -> None
 
         See the class docstring for details.
         """
+        if cnttypes is None: cnttypes = {}
         self.webroot = webroot
         self.cnttypes = cnttypes
         self.entries = {}
+        if not config.get('override_cnttypes'):
+            for k, v in self.CNTTYPES.items():
+                self.cnttypes.setdefault(k, v)
         self.lock = threading.RLock()
 
     def __enter__(self):
@@ -208,25 +213,26 @@ class FileCache:
     def __exit__(self, *args):
         return self.lock.__exit__(*args)
 
-    def get(self, path):
+    def get(self, path, **kwds):
         """
-        get(path) -> Entry
+        get(path, **kwds) -> Entry
 
         Get an Entry for the given path. Either validate a cached one,
-        or create a new one.
+        or create a new one. Keyword arguments are passed to either
+        self.webroot (if that is called), or to the class-level read()
+        method.
         """
         with self:
             ent = self.entries.get(path)
             if ent:
                 ent = ent.validate()
+            elif callable(self.webroot):
+                ent = self.webroot(path, **kwds)
             else:
-                if callable(self.webroot):
-                    ent = self.webroot()
-                else:
-                    source = path
-                    if source[:1] in '/\\': source = source[1:]
-                    source = os.path.join(self.webroot, source)
-                    ent = self.Entry.read(self, path, source)
+                source = path
+                if source[:1] in '/\\': source = source[1:]
+                source = os.path.join(self.webroot, source)
+                ent = self.Entry.read(self, path, source, **kwds)
             self.entries[path] = ent
             return ent
 
