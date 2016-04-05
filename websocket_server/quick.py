@@ -65,8 +65,11 @@ class FileCache:
                     the third millenium.
     """
 
-    CNTTYPES = {'.ico': 'image/vnd.microsoft.icon',
-                '.html': 'text/html; charset=utf-8'}
+    CNTTYPES = {'.txt': 'text/plain; charset=utf-8',
+                '.html': 'text/html; charset=utf-8',
+                '.css': 'text/css',
+                '.js': 'application/javascript',
+                '.ico': 'image/vnd.microsoft.icon'}
 
     class Entry:
         """
