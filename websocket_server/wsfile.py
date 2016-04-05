@@ -109,19 +109,19 @@ class WebSocketFile(object):
         return cls(rdfile, wrfile, server_side)
 
     @classmethod
-    def from_socket(cls, sock, server_side=False):
+    def from_socket(cls, socket, server_side=False):
         """
         from_socket(cls, socket, server_side=False) -> WebSocketFile
 
         Wrap a socket in a WebSocketFile. Uses the makefile() method
         to obtain the file objects internall used.
         """
-        return cls.from_file(sock.makefile('rwb'), server_side)
+        return cls.from_file(socket.makefile('rwb'), server_side)
 
     @classmethod
     def from_file(cls, file, server_side=False):
         """
-        from_file(cls, rdfile, wrfile, server_side=False) -> WebSocketFile
+        from_file(cls, file, server_side=False) -> WebSocketFile
 
         Wrap a read-write file object.
         """
