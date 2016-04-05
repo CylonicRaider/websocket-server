@@ -47,22 +47,36 @@ class FileCache:
               dictionary, expected to be a path-filename mapping similarly
               to the string option (relative filenames are resolved relative
               to the current working directory); if callable, it is expected
-              to produce Entries (or None-s) for the path given as the only
-              positional argument;
+              to produce Entries for the path given as the only positional
+              argument; the Ellipsis singleton may be returned to indicate
+              that a path is actually a directory, or None if the path does
+              not exist.
     cnttypes: Mapping of filename extensions (with period) to MIME types.
               None (the default) is cast to an empty dictionary. Unless
               override_cnttypes is true, the class-level CNTTYPES
               attribute is merged to amend missing keys.
-    filter  : A callable or a container for whitelisting paths. If callable,
-              this is called before every access to a resource with the
-              virtual path as only argument to determing whether the request
-              is valid or should be rejected; if not callable, a membership
-              test will be performed (like, path in filter) to determine
-              whether the access should be allowed; this way, either a call-
-              back or a precomputed list can be specified. A filter of None
-              admits all paths.
 
     Keyword-only parameters:
+    filter           : A callable or a container for whitelisting paths. If
+                       callable, this is called before every access to a
+                       resource with the virtual path as only argument to
+                       determing whether the request is valid or should be
+                       rejected; if not callable, a membership test will be
+                       performed (like, path in filter) to determine whether
+                       the access should be allowed; this way, either a call-
+                       back or a precomputed list can be specified. A filter
+                       of None (the default) admits all paths.
+    handle_dirs      : Handle directories. If true (as the default is),
+                       access to directories is treated specially: If a path
+                       that maps to a directory is requested, a trailing
+                       slash (if not already present) is appended by
+                       redirecting the client (temporarily), then a file
+                       called "index.html" is delivered, instead of the
+                       directory (if it exists). Because of the redirecting,
+                       Entry.send() cannot be used for this, and the send()
+                       method of FileCache must be used (which implements
+                       this). If this is false, the redirection does not
+                       happen, and send() treats directories as absent.
     override_cnttypes: If true, the class attribute CNTTYPES will not be
                        considered while creating the content type mapping
                        (default is false; not taken over as an attribute).
@@ -90,8 +104,8 @@ class FileCache:
 
     class Entry:
         """
-        Entry(parent, path, data, updated=None, cnttype=None, source=None)
-            -> new instance
+        Entry(parent, path, data, updated=None, cnttype=None, source=None,
+            **kwds) -> new instance
 
         Entry of a FileCache.
 
@@ -105,6 +119,8 @@ class FileCache:
         source : The (real) path of the file (if any; like,
                  /var/www/websockets/favicon.ico). If not present, validate()
                  assumes the ressource is virtual and does nothing.
+
+        Extra keyword arguments are ignored.
 
         Instance variables (apart from constructor parameters):
         etag   : Entity tag. Unique identifier of the ressource in its
@@ -136,10 +152,10 @@ class FileCache:
             return cls(parent, path, data, updated, cnttype, source, **kwds)
 
         def __init__(self, parent, path, data, updated=None, cnttype=None,
-                     source=None):
+                     source=None, **kwds):
             """
             __init__(parent, path, data, updated=None, cnttype=None,
-                source=None) -> None
+                source=None, **kwds) -> None
 
             See class docstring for details.
             """
@@ -196,10 +212,10 @@ class FileCache:
                     send_full = False
             if send_full:
                 clen = len(self.data)
-                handler.send_response(200, clen)
+                handler.send_response(200)
             else:
                 clen = 0
-                handler.send_response(304, clen)
+                handler.send_response(304)
             if self.cnttype:
                 handler.send_header('Content-Type', self.cnttype)
             handler.send_header('Content-Length', clen)
@@ -211,16 +227,17 @@ class FileCache:
             if send_full:
                 handler.wfile.write(self.data)
 
-    def __init__(self, webroot, cnttypes=None, filter=None, **config):
+    def __init__(self, webroot, cnttypes=None, **config):
         """
-        __init__(webroot, cnttypes=None, filter=None, **config) -> None
+        __init__(webroot, cnttypes=None, **config) -> None
 
         See the class docstring for details.
         """
         if cnttypes is None: cnttypes = {}
         self.webroot = webroot
         self.cnttypes = cnttypes
-        self.filter = filter
+        self.filter = config.get('filter', None)
+        self.handle_dirs = config.get('handle_dirs', True)
         self.entries = {}
         if not config.get('override_cnttypes'):
             for k, v in self.CNTTYPES.items():
@@ -234,11 +251,13 @@ class FileCache:
 
     def get(self, path, **kwds):
         """
-        get(path, **kwds) -> Entry
+        get(path, **kwds) -> Entry or Ellipsis or None
 
         Get an Entry for the given path. Either validate a cached one,
         or create a new one. If the path does not pass self.filter, None
-        is returned without performing any further action. Keyword
+        is returned without performing any further action. If the path
+        is pointing to a directory (as determined by filesystem inspection
+        or the callable self.webroot), Ellipsis is returned. Keyword
         arguments are passed to either self.webroot (if that is called),
         or to the class-level read() method.
         """
@@ -250,7 +269,7 @@ class FileCache:
             if path not in self.filter: return None
         with self:
             ent = self.entries.get(path)
-            if ent:
+            if ent and ent is not Ellipsis:
                 ent = ent.validate()
             elif callable(self.webroot):
                 ent = self.webroot(path, **kwds)
@@ -264,9 +283,50 @@ class FileCache:
                     source = path
                     if source[:1] in '/\\': source = source[1:]
                     source = os.path.join(self.webroot, source)
-                ent = self.Entry.read(self, path, source, **kwds)
+                if os.path.isdir(source):
+                    ent = Ellipsis
+                elif os.path.isfile(source):
+                    ent = self.Entry.read(self, path, source, **kwds)
+                else:
+                    ent = None
             self.entries[path] = ent
             return ent
+
+    def send(self, handler, path=None, **kwds):
+        """
+        send(handler, path=None, **kwds) -> Entry or Ellipsis or None
+
+        Send the resource named by path to handler. If path is None,
+        the handler's path attribute (minus the query) is used.
+        Directories are handled if the handle_dirs attribute is true;
+        see the description in the class docstring for details.
+        Keyword arguments are passed through to the get() method.
+        The return value is an Entry if a page was served successfully,
+        Ellipsis if an automatic redirection happened, or None if
+        nothing could be done (the caller might serve a 404 page
+        instead).
+        """
+        if path is None: path = handler.path.partition('?')[0]
+        res = self.get(path, **kwds)
+        if not res:
+            return res
+        elif res is Ellipsis:
+            if not self.handle_dirs: return None
+            if not path.endswith('/'):
+                handler.send_response(302)
+                handler.send_header('Location', path + '/')
+                handler.send_header('Content-Length', 0)
+                handler.end_headers()
+                return Ellipsis
+            path += 'index.html'
+            res = self.get(path, **kwds)
+            if not res:
+                return res
+            elif res is Ellipsis:
+                # Seriously? You named a directory "index.html"?
+                return None
+        res.send(handler)
+        return res
 
 def run(handler, server=ThreadingHTTPServer, prepare=None):
     """
