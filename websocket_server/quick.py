@@ -23,9 +23,24 @@ try:
 except ImportError:
     from socketserver import ThreadingMixIn
 
+__all__ = ['run', 'FileCache']
+
 def parse_http_timestamp(date):
+    """
+    parse_http_timestamp(date) -> float
+
+    Parse a timestamp as present in HTTP headers. Return the corresponding
+    UNIX time value.
+    Convenience wrapper around email.utils.parsedate() and calendar.timegm().
+    """
     return calendar.timegm(email.utils.parsedate(date))
 def format_http_timestamp(ts):
+    """
+    format_http_timestamp(ts) -> str
+
+    Format the given UNIX timestamp to a string as usable in HTTP headers.
+    Convenience wrapper around email.utils.formatdate().
+    """
     return email.utils.formatdate(ts, usegmt=True)
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -33,6 +48,7 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     Multi-threaded HTTP server.
 
     Necessary for parallel use by many clients.
+    Used by run().
     """
     pass
 
