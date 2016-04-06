@@ -327,7 +327,7 @@ class WebSocketFile(object):
                     # Validate length.
                     if length < 65536:
                         self._error('Invalid frame length encoding')
-                    elif length >= 4611686018427387904:
+                    elif length >= 9223372036854775808: # 2 ** 63
                         # MUST in RFC 6455, section 5.2
                         # We could handle those frames easily (given we have
                         # enough memory), though.
@@ -488,7 +488,7 @@ class WebSocketFile(object):
         elif len(data) < 65536:
             header[1] |= 126
             header.extend(struct.pack('!H', len(data)))
-        elif len(data) < 4611686018427387904:
+        elif len(data) < 9223372036854775808: # 2 ** 63
             header[1] |= 127
             header.extend(struct.pack('!Q', len(data)))
         else:
