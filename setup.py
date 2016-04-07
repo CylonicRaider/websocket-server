@@ -7,4 +7,5 @@ setup(name='websocket_server',
       description='Stand-alone WebSocket server library',
       author='@CylonicRaider',
       url='https://github.com/CylonicRaider/websocket-server',
-      packages=['websocket_server'])
+      packages=['websocket_server'],
+      package_data={'websocket_server': ['testpage.html']})
