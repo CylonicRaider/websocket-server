@@ -2,7 +2,7 @@
 # https://github.com/CylonicRaider/websocket-server
 
 """
-websocket_server -- WebSocket server library
+WebSocket server library
 
 This is a little stand-alone library for WebSocket servers.
 It integrates neatly with the standard library, providing easily set-up
@@ -24,7 +24,7 @@ __version__ = '1.0'
 # Auxillary modules
 from . import compat, constants, exceptions, tools
 # Main modules
-from . import examples, quick, server, wsfile
+from . import wsfile, server, client, quick, examples
 
 __all__ = constants.__all__ + exceptions.__all__
 __all__ += ['WebSocketFile', 'wrap', 'WebSocketRequestHandler']

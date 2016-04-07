@@ -31,7 +31,7 @@ except NameError:
     callable = lambda x: hasattr(x, '__call__')
 
 import sys as _sys
-if _sys.version_info[0] < 2:
+if _sys.version_info[0] <= 2:
     def tobytes(s):
         return s
 else:

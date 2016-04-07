@@ -16,9 +16,10 @@ def mask(mask, data):
     """
     mask(mask, data) -> bytearray
 
-    Given a four-byte mask and an arbitrary-length data bytearray,
-    mask/unmask the latter.
-    May be in-place. The result is returned in any case.
+    Given a four-byte mask and an arbitrary-length data bytearray, mask /
+    unmask the latter.
+    May be in-place. Actually is in the current implementation. The result is
+    returned in any case.
     """
     for i in xrange(len(data)):
         data[i] ^= mask[i % 4]
@@ -30,7 +31,7 @@ def new_mask():
 
     Create a new mask value as conformant to the protocol.
     """
-    return bytes(os.urandom(4))
+    return bytearray(os.urandom(4))
 
 # RFC 2616, Section 2.2: A token is a sequence of characters that
 # are not separators or control characters.
@@ -50,15 +51,14 @@ def parse_paramlist(string, allow_attributes=True):
     """
     parse_paramlist(string, allow_attributes=True) -> list
 
-    Parse a comma-delimited sequence of tokens with HTTP-style
-    attributes (like, "foo; bar=baz"); the return value is a list
-    of the form [['foo', 'bar=baz']], to re-use the given
-    example. If allow_attributes is false, attributes as described
-    above are not allowed, and the return value is a non-nested
-    list of strings instead.
+    Parse a comma-delimited sequence of tokens with HTTP-style attributes
+    (like, "foo; bar=baz"); the return value is a list of the form [['foo',
+    'bar=baz']], to re-use the given example. If allow_attributes is false,
+    attributes as described above are not allowed, and the return value is
+    a non-nested list of strings instead.
     May raise ValueError if the string does not conform.
-    I could seriously not find anything in the standard library
-    that would do that.
+    I could seriously not find anything in the standard library that would
+    do that.
     """
     # Variables.
     ret, offset, in_params = [], 0, False

@@ -17,6 +17,20 @@ from .tools import parse_paramlist
 
 __all__ = ['WebSocketRequestHandler']
 
+# The "magic" GUID used for Sec-WebSocket-Accept.
+MAGIC_GUID = unicode('258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+
+def process_key(key):
+    """
+    process_key(key) -> unicode
+
+    Transform the given key as required to form a Sec-WebSocket-Accept
+    field, and return the new key.
+    """
+    enc_key = (unicode(key) + MAGIC_GUID).encode('ascii')
+    key_reply = base64.b64encode(hashlib.sha1(enc_key).digest())
+    return key_reply.decode('ascii')
+
 class WebSocketRequestHandler(BaseHTTPRequestHandler):
     """
     Extension of BaseHTTPRequestHandler allowing to handle WebSockets.
@@ -31,9 +45,6 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
 
     # Override default from StreamRequestHandler
     rbufsize = 0
-
-    # The "magic" GUID used for Sec-WebSocket-Accept.
-    MAGIC_GUID = unicode('258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
 
     def handshake(self):
         """
@@ -78,7 +89,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         try:
             if len(base64.b64decode(tobytes(key))) != 16:
                 self._error(message='Invalid WebSocket key length')
-        except TypeError:
+        except (TypeError, ValueError):
             self._error(message='Invalid WebSocket key')
         # Process extensions and subprotocols.
         try:
@@ -153,9 +164,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         end_headers() must not be called; that happens in
         perform_handshake().
         """
-        enc_key = (unicode(key) + self.MAGIC_GUID).encode('ascii')
-        key_reply = base64.b64encode(hashlib.sha1(enc_key).digest())
-        key_reply = key_reply.decode('ascii')
+        key_reply = process_key(key)
         self.send_header('Upgrade', 'websocket')
         self.send_header('Connection', 'Upgrade')
         self.send_header('Sec-WebSocket-Accept', key_reply)

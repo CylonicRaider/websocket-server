@@ -154,6 +154,7 @@ class WebSocketFile(object):
         Should be used for small amounts.
         Raises EOFError if less than length bytes are read.
         """
+        if not length: return b''
         rf = self._rdfile
         buf, buflen = [], 0
         while buflen < length:
@@ -174,7 +175,11 @@ class WebSocketFile(object):
         If offset is nonzero, reading starts at that offset.
         Raises EOFError on failure.
         """
+        # Convert integers into byte arrays.
         if isinstance(buf, int): buf = bytearray(buf)
+        # Don't fail on empty reads.
+        if not buf: return buf
+        # Main... try-except clause.
         rf, fl = self._rdfile, len(buf)
         try:
             # Try "native" readinto method.
@@ -340,14 +345,14 @@ class WebSocketFile(object):
                 # Allocate result buffer.
                 rbuf = bytearray(length)
                 # Read rest of message.
-                if length != 0: self._readinto_raw(rbuf)
+                self._readinto_raw(rbuf)
                 # Verify this is not a post-close frame.
                 if was_read_close:
                     self._error('Received frame after closing one')
                 # Reverse masking if necessary.
                 if masked: rbuf = mask(msk, rbuf)
                 # Done!
-                return Frame(opcode, rbuf, bool(final), msgtype)
+                return Frame(opcode, bytes(rbuf), bool(final), msgtype)
             except EOFError:
                 self._error('Truncated frame')
 
@@ -446,21 +451,21 @@ class WebSocketFile(object):
         self.close_ex(code, message)
         raise ProtocolError(message, code=code)
 
-    def write_single_frame(self, opcode, data, final=True, mask=None):
+    def write_single_frame(self, opcode, data, final=True, maskkey=None):
         """
-        write_single_frame(opcode, data, final=True, mask=None) -> None
+        write_single_frame(opcode, data, final=True, maskkey=None) -> None
 
         Write a frame with the given parameters.
-        final determines whether the frame is final; opcode is one of
-        the OP_* constants; data is the payload of the message. mask,
-        if not None, is a length-four byte sequence that determines
-        which mask to use, otherwise, tools.new_mask() will be invoked
-        to create one if necessary.
+        final determines whether the frame is final; opcode is one of the
+        OP_* constants; data is the payload of the message. maskkey, if not
+        None, is a length-four byte sequence that determines which mask key
+        to use, otherwise, tools.new_mask() will be invoked to create one
+        if necessary.
         If opcode is OP_TEXT, data may be a Unicode or a byte string,
         otherwise, data must be a byte string. If the type of data is
         inappropriate, TypeError is raised.
-        Raises ConnectionClosedError is the connection is already
-        closed or closing.
+        Raises ConnectionClosedError is the connection is already closed or
+        closing.
         """
         # Validate arguments.
         if not constants.OP_MIN <= opcode <= constants.OP_MAX:
@@ -470,15 +475,19 @@ class WebSocketFile(object):
                 raise TypeError('Unicode payload specfied for '
                     'non-Unicode opcode')
             data = data.encode('utf-8')
+        elif not isinstance(data, (bytes, bytearray)):
+            raise TypeError('Invalid data type')
         # Allocate new mask if necessary; validate type.
-        if mask is None:
-            if not self.server_side:
-                mask = new_mask()
-        elif isinstance(mask, bytes):
-            mask = bytearray(mask)
+        masked = (not self.server_side)
+        if masked:
+            if maskkey is None:
+                maskkey = new_mask()
+            elif isinstance(maskkey, bytes):
+                maskkey = bytearray(maskkey)
+        else:
+            maskkey = None
         # Construct message header.
         header = bytearray(2)
-        masked = (not self.server_side)
         if final: header[0] |= constants.FLAG_FIN
         if masked: header[1] |= constants.FLAG_MASK
         header[0] |= opcode
@@ -494,8 +503,12 @@ class WebSocketFile(object):
         else:
             # WTF?
             raise ValueError('Frame too long')
-        # Append masking key.
-        if mask: header.extend(mask)
+        # Masking.
+        if masked:
+            # Add key to header.
+            header.extend(maskkey)
+            # Actually mask data.
+            data = mask(maskkey, bytearray(data))
         # Drain all that onto the wire.
         with self.wrlock:
             if self._written_close:
