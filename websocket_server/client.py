@@ -38,7 +38,8 @@ def connect(url, protos=None, **config):
     If the URL contains username or password fields, those will be sent as a
     Basic HTTP authentication header.
     The HTTP connection and response are stored in instance attributes of the
-    return value, as "request" and "response", respectively.
+    return value, as "request" and "response", respectively; the socket of
+    the connection is available as "socket".
     Raises a ValueError if the URL is invalid, or a ProtocolError if the
     remote host did not obey the protocol, a HTTPException if some HTTP-
     related error occurs (such as failure to authenticate or redirect), or
@@ -86,8 +87,9 @@ def connect(url, protos=None, **config):
             # Since httplib considers 101 responses to have a "fixed length
             # (of zero)" and eagerly automatically closes the underlying
             # socket, we have to grab the files here to keep it open.
-            rdfile = conn.sock.makefile('rb')
-            wrfile = conn.sock.makefile('wb')
+            sock = conn.sock
+            rdfile = sock.makefile('rb')
+            wrfile = sock.makefile('wb')
             # Obtain response.
             resp = conn.getresponse()
             # Handle replies.
@@ -133,6 +135,7 @@ def connect(url, protos=None, **config):
             raise ProtocolError('Invalid subprotocol received')
         # Construct return value.
         ret = wrap(rdfile, wrfile)
+        ret.socket = sock
         ret.request = conn
         ret.resonse = resp
         return ret
