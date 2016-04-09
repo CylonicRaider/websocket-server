@@ -597,16 +597,16 @@ class WebSocketFile(object):
                     self._rdfile.close()
                     self._wrfile.close()
                     self._closed = True
-                # Anyway, won't write another frame.
-                return
-            # Write close frame.
-            self.write_single_frame(constants.OP_CLOSE, payload)
-            # Close frame written.
-            self._written_close = True
+            else:
+                # Write close frame.
+                self.write_single_frame(constants.OP_CLOSE, payload)
+                # Close frame written.
+                self._written_close = True
         # Wait for close if desired.
         if wait:
             with self._rdlock:
                 while self.read_single_frame(): pass
+            self.close_ex()
 
     def close(self, message=None, wait=False):
         """
