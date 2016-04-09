@@ -179,6 +179,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         ws = wrap(self.rfile, self.wfile, server_side=True)
         # Is done in self.finish().
         ws.close_wrapped = False
+        ws._socket = self.connection
         return ws
 
     # Used internally.

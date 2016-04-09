@@ -50,47 +50,49 @@ Message = namedtuple('Message', ('msgtype', 'content', 'final'))
 
 class WebSocketFile(object):
     """
-    WebSocket protocol implementation. May base on a pair
-    of file-like objects (for usage in HTTPRequestHandler's);
-    a "raw" socket (if you prefer parsing HTTP headers yourself);
-    or a single file object (if you've got such a read-write one).
-    This class is *not* concerned with the handshake; use other
-    methods (like the built-in HTTP servers (or clients)) for
-    performing it.
+    WebSocket protocol implementation. May base on a pair of file-like
+    objects (for usage in HTTPRequestHandler's); a "raw" socket (if you
+    prefer parsing HTTP headers yourself); or a single file object (if
+    you've got such a read-write one). This class is *not* concerned
+    with the handshake; use other methods (like the built-in HTTP servers
+    (or clients)) for performing it.
 
     WebSocketFile(rdfile, wrfile, server_side=False)
     rdfile     : File to perform reading operations on.
     wrfile     : File to perform writing operations on.
-    server_side: Whether to engage server-side behavior (if true)
-                 or not (otherwise). While not used in the scope
-                 of the server-side library, may be interesting
-                 for other purposes.
+    server_side: Whether to engage server-side behavior (if true) or not
+                 (otherwise).
 
     Attributes:
     server_side  : Whether this is a server-side WebSocketFile
-    close_wrapped: Whether calling close() should close the underlying
-                   files as well. Defaults to True.
-    rdlock       : threading.RLock instance used for serializing and
+    close_wrapped: Whether calling close() should close the underlying files
+                   as well. Defaults to True.
+    _rdlock      : threading.RLock instance used for serializing and
                    protecting reading-related operations.
-    wrlock       : threading.RLock instance user for serializing and
+    _wrlock      : threading.RLock instance user for serializing and
                    protecting write-related operations.
-                   rdlock should always be asserted before wrlock.
+                   _rdlock should always be asserted before _wrlock, if at
+                   all; generally don't call reading-related methods (which
+                   also include close*()) with _wrlock asserted, and don't
+                   use those locks unless necessary. Make your own.
+    _socket      : Underlying socket (set by the client and server modules).
+                   May not be present at all. Only use this if you are really
+                   sure you need to.
 
     Class attributes:
     MAXFRAME    : Maximum frame payload length. May be overridden by
-                  subclasses (or instances). Value is either an integer
-                  or None (indicating no limit). This is not enforced
-                  for outgoing messages.
-    MAXCONTFRAME: Maximum length of a frame reconstructed from fragments.
-                  May be overridden as well. The value has the same
-                  semantics as the one of MAXFRAME. This is not enforced
-                  for outgoing messages as well.
+                  subclasses (or instances). Value is either an integer or
+                  None (indicating no limit). This is not enforced for
+                  outgoing messages.
+    MAXCONTFRAME: Maximum length of a frame reconstructed from fragments. May
+                  be overridden as well. The value has the same semantics as
+                  the one of MAXFRAME. This is not enforced for outgoing
+                  messages as well.
 
-    NOTE: This class reads exactly the amount of bytes needed, yet
-          buffering of the underlying stream may cause frames to
-          "congest".
-          The underlying stream must be blocking, or unpredictable
-          behavior occurs.
+    NOTE: This class reads exactly the amount of bytes needed, yet buffering
+          of the underlying stream may cause frames to "congest".
+          The underlying stream must be blocking, or unpredictable behavior
+          occurs.
     """
 
     # Maximum allowed frame length.
@@ -135,15 +137,17 @@ class WebSocketFile(object):
         """
         self._rdfile = rdfile
         self._wrfile = wrfile
+        self._socket = None
         self.server_side = server_side
         self.close_wrapped = True
-        self.rdlock = threading.RLock()
-        self.wrlock = threading.RLock()
+        self._rdlock = threading.RLock()
+        self._wrlock = threading.RLock()
         factory = codecs.getincrementaldecoder('utf-8')
         self._decoder = factory(errors='strict')
         self._cur_opcode = None
         self._read_close = False
         self._written_close = False
+        self._closed = False
 
     def _read_raw(self, length):
         """
@@ -260,9 +264,12 @@ class WebSocketFile(object):
         is read, EOF inside an unfinished fragmented frame is
         encountered, etc.
         """
-        with self.rdlock:
+        with self._rdlock:
             # Store for later.
             was_read_close = self._read_close
+            # No more reading after close.
+            if was_read_close:
+                return None
             # Read opcode byte. A EOF here is non-fatal.
             header = bytearray(2)
             try:
@@ -379,7 +386,7 @@ class WebSocketFile(object):
               incomplete UTF-8 sequences.
         """
         buf, buflen = [], 0
-        with self.rdlock:
+        with self._rdlock:
             while 1:
                 # Read frame.
                 fr = self.read_single_frame()
@@ -421,17 +428,21 @@ class WebSocketFile(object):
 
     def handle_control(self, opcode, cnt):
         """
-        handle_control(opcode, cnt) -> None
+        handle_control(opcode, cnt) -> bool
 
         Handle a control frame.
         Called by read_frame() if a control frame is read, to evoke a
         required response "as soon as practical".
+        The return value tells whether it is safe to continue reading (true),
+        or if EOF (i.e. a close frame) was reached (false).
         """
         if opcode == constants.OP_PING:
             self.write_single_frame(constants.OP_PONG, cnt)
         elif opcode == constants.OP_CLOSE:
             self._read_close = True
             self.close_ex(*self.parse_close(cnt))
+            return False
+        return True
 
     # Used internally.
     def _error(self, message):
@@ -510,7 +521,7 @@ class WebSocketFile(object):
             # Actually mask data.
             data = mask(maskkey, bytearray(data))
         # Drain all that onto the wire.
-        with self.wrlock:
+        with self._wrlock:
             if self._written_close:
                 raise ConnectionClosedError(
                     'Trying to write data after close()')
@@ -548,14 +559,15 @@ class WebSocketFile(object):
         """
         return self.write_frame(constants.OP_BINARY, data)
 
-    def close_ex(self, code=None, message=None):
+    def close_ex(self, code=None, message=None, wait=False):
         """
-        close_ex(code=None, message=None) -> None
+        close_ex(code=None, message=None, wait=False) -> None
 
-        Close the underlying connection, delivering the code and message
-        (if given) to the other point. If code is None, message is
-        ignored. If message is a Unicode string, it is encoded using
-        UTF-8.
+        Close the underlying connection, delivering the code and message (if
+        given) to the other point. If code is None, message is ignored. If
+        message is a Unicode string, it is encoded using UTF-8. If wait is
+        true, this will read frames from self until the other side
+        acknowledges the close; as this may cause data loss, be careful.
         If the connection is already closed, the method has no effect.
         """
         # Construct payload.
@@ -570,28 +582,36 @@ class WebSocketFile(object):
                 payload.extend(message.encode('utf-8'))
             else:
                 payload.extend(message)
-        with self.wrlock:
+        with self._wrlock:
             # Already closed?
             if self._written_close:
                 # Close underlying streams if necessary.
-                if self._read_close and self.close_wrapped:
+                if (self._read_close and self.close_wrapped and
+                        not self._closed):
                     self._rdfile.close()
                     self._wrfile.close()
+                    self._closed = True
                 # Anyway, won't write another frame.
                 return
             # Write close frame.
             self.write_single_frame(constants.OP_CLOSE, payload)
             # Close frame written.
             self._written_close = True
+        # Wait for close if desired.
+        if wait:
+            with self._rdlock:
+                while self.read_single_frame(): pass
 
-    def close(self, message=None):
+    def close(self, message=None, wait=False):
         """
-        close(message=None) -> None
+        close(message=None, wait=False) -> None
 
         Close the underlying connection with a code of CLOSE_NORMAL
-        and the (optional) given message.
+        and the (optional) given message. If wait is true, this will
+        read frames from self until the other side acknowledges the
+        close; as this may cause data loss, be careful.
         """
-        self.close_ex(constants.CLOSE_NORMAL, message)
+        self.close_ex(constants.CLOSE_NORMAL, message, wait)
 
     def parse_close(self, content):
         """

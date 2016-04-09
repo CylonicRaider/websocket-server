@@ -39,7 +39,7 @@ def connect(url, protos=None, **config):
     Basic HTTP authentication header.
     The HTTP connection and response are stored in instance attributes of the
     return value, as "request" and "response", respectively; the socket of
-    the connection is available as "socket".
+    the connection is available as "_socket".
     Raises a ValueError if the URL is invalid, or a ProtocolError if the
     remote host did not obey the protocol, a HTTPException if some HTTP-
     related error occurs (such as failure to authenticate or redirect), or
@@ -135,7 +135,7 @@ def connect(url, protos=None, **config):
             raise ProtocolError('Invalid subprotocol received')
         # Construct return value.
         ret = wrap(rdfile, wrfile)
-        ret.socket = sock
+        ret._socket = sock
         ret.request = conn
         ret.resonse = resp
         return ret
