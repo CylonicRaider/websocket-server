@@ -26,6 +26,21 @@ except ImportError:
 
 __all__ = ['connect']
 
+# HACK
+class TweakHTTPResponse(httplib.HTTPResponse):
+    """
+    TweakHTTPResponse(...) -> new instance
+
+    Subclass of httplib.HTTPResponse overriding the behavior of automatically
+    closing 101 Switching Protocols responses.
+    Seriously, did anyone of them even *know* of this status code?
+    """
+    def begin(self):
+        httplib.HTTPResponse.begin(self)
+        if self.status == httplib.SWITCHING_PROTOCOLS:
+            self.length = None
+            self.will_close = True
+
 def connect(url, protos=None, **config):
     """
     connect(url, protos=None, **config) -> WebSocketFile
@@ -61,10 +76,12 @@ def connect(url, protos=None, **config):
             elif res.scheme == 'ws':
                 conn = httplib.HTTPConnection(res.hostname, res.port,
                                               **config)
+                conn.response_class = TweakHTTPResponse
                 conn.connect()
             elif res.scheme == 'wss':
                 conn = httplib.HTTPSConnection(res.hostname, res.port,
                                                **config)
+                conn.response_class = TweakHTTPResponse
                 conn.connect()
             else:
                 raise ValueError('Bad URL scheme.')
@@ -85,11 +102,8 @@ def connect(url, protos=None, **config):
             for n, v in headers.items():
                 conn.putheader(n, v)
             conn.endheaders()
-            # Since httplib considers 101 responses to have a "fixed length
-            # (of zero)" and eagerly automatically closes the underlying
-            # socket, we have to grab the files here to keep it open.
+            # Grab socket reference; keep it alive for us.
             sock = conn.sock
-            rdfile = sock.makefile('rb')
             wrfile = sock.makefile('wb')
             # Obtain response.
             resp = conn.getresponse()
@@ -122,10 +136,6 @@ def connect(url, protos=None, **config):
             else:
                 raise httplib.HTTPException('Cannot handle status code %r' %
                                             resp.status)
-        # Sanity check.
-        enc = resp.msg.get('Transfer-Encoding')
-        if enc and enc != 'identity':
-            raise httplib.HTTPException('Cannot handle transfer-encoding')
         # Verify key and other fields.
         if resp.msg.get('Sec-WebSocket-Accept') != process_key(key):
             raise ProtocolError('Invalid reply key')
@@ -135,7 +145,10 @@ def connect(url, protos=None, **config):
         if p and (not protos or p not in protos):
             raise ProtocolError('Invalid subprotocol received')
         # Construct return value.
-        ret = wrap(rdfile, wrfile)
+        # NOTE: Have to read from resp itself, as it might have buffered the
+        #       beginning of the server's data, as that might have been
+        #       coalesced with the headers.
+        ret = wrap(resp, wrfile)
         ret._socket = sock
         ret.request = conn
         ret.resonse = resp
