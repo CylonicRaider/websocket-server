@@ -15,6 +15,8 @@ from .exceptions import ProtocolError
 from .server import WebSocketRequestHandler
 from .quick import FileCache, run
 
+__all__ = ['EchoRequestHandler']
+
 # "Page" to display in case of a 404.
 NOT_FOUND = b'404 Not Found'
 
@@ -22,8 +24,8 @@ class EchoRequestHandler(WebSocketRequestHandler):
     """
     Echo-back WebSocketRequestHandler.
 
-    Reads a message, and writes it back, until the client
-    closes the connection.
+    Reads a message, and writes it back, until the client closes the
+    connection.
     """
     def do_GET(self):
         """

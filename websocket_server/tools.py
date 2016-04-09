@@ -18,8 +18,8 @@ def mask(mask, data):
 
     Given a four-byte mask and an arbitrary-length data bytearray, mask /
     unmask the latter.
-    May be in-place. Actually is in the current implementation. The result is
-    returned in any case.
+    May be in-place. Actually is in the current implementation. The result
+    is returned in any case.
     """
     for i in xrange(len(data)):
         data[i] ^= mask[i % 4]
@@ -52,10 +52,10 @@ def parse_paramlist(string, allow_attributes=True):
     parse_paramlist(string, allow_attributes=True) -> list
 
     Parse a comma-delimited sequence of tokens with HTTP-style attributes
-    (like, "foo; bar=baz"); the return value is a list of the form [['foo',
-    'bar=baz']], to re-use the given example. If allow_attributes is false,
-    attributes as described above are not allowed, and the return value is
-    a non-nested list of strings instead.
+    (like, "foo; bar=baz"); the return value is a list of the form
+    [['foo', 'bar=baz']], to re-use the given example. If allow_attributes
+    is false, attributes as described above are not allowed, and the
+    return value is a non-nested list of strings instead.
     May raise ValueError if the string does not conform.
     I could seriously not find anything in the standard library that would
     do that.

@@ -14,9 +14,9 @@ TLS support is out of scope of this package; for setting up a TLS-enabled
 WebSocket server, refer to online sources on how to achieve that using
 HTTPServer.
 
-For an example usage, see the examples module, for reference documentation,
-see the wsfile and server modules; also see the quick module for further
-convenience functions.
+For an example usage, see the examples module, for reference
+documentation, see the wsfile and server modules; also see the quick
+module for further convenience functions.
 """
 
 __version__ = '1.0'

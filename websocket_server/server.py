@@ -154,13 +154,12 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         handshake_reply(key, exts, prots) -> None
 
         Construct and send a handshake reply.
-        key is the unmodified WebSocket key; exts and prots
-        are the extensions and subprotocols, as elaborated in
-        process_extensions() and in process_subprotocols().
-        The default implementation sends a confirming
-        Sec-WebSocket-Allow header back, and should hence
-        be called by extending classes, unless they implement
-        that on their own.
+        key is the unmodified WebSocket key; exts and prots are the
+        extensions and subprotocols, as elaborated in process_extensions()
+        and in process_subprotocols().
+        The default implementation sends a confirming Sec-WebSocket-Allow
+        header back, and should hence be called by extending classes,
+        unless they implement that on their own.
         end_headers() must not be called; that happens in
         perform_handshake().
         """
@@ -193,9 +192,9 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
 
         Convenience method for indicating an error.
         The default implementation returns code as the HTTP status code to
-        the client, and adds message (if non-None) as a text/plain
-        UTF-8-encoded request body, and raises a ProtocolError with no
-        error code.
+        the client, and adds message (if non-None) as a text/plain UTF-8
+        encoded request body, and raises a ProtocolError with no error
+        code.
         """
         self.send_response(code)
         if message is not None:

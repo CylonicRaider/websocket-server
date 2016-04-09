@@ -31,15 +31,16 @@ def connect(url, protos=None, **config):
     connect(url, protos=None, **config) -> WebSocketFile
 
     Connect to the given URL, which is parsed to obtain all necessary
-    information. Depending on the scheme (ws or wss), a HTTPConnection or a
-    HTTPSConnection is used internally; protos (a list of strings, a string,
-    or None) can be used to specify subprotocols; keyword arguments can be
-    passed the underlying connection constructor via config.
-    If the URL contains username or password fields, those will be sent as a
-    Basic HTTP authentication header.
-    The HTTP connection and response are stored in instance attributes of the
-    return value, as "request" and "response", respectively; the socket of
-    the connection is available as "_socket".
+    information. Depending on the scheme (ws or wss), a HTTPConnection or
+    a HTTPSConnection is used internally; protos (a list of strings, a
+    string, or None) can be used to specify subprotocols; keyword
+    arguments can be passed the underlying connection constructor via
+    config.
+    If the URL contains username or password fields, those will be sent as
+    a Basic HTTP authentication header.
+    The HTTP connection and response are stored in instance attributes of
+    the return value, as "request" and "response", respectively; the
+    socket of the connection is available as "_socket".
     Raises a ValueError if the URL is invalid, or a ProtocolError if the
     remote host did not obey the protocol, a HTTPException if some HTTP-
     related error occurs (such as failure to authenticate or redirect), or

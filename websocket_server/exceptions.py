@@ -5,9 +5,6 @@
 Exceptions.
 """
 
-__all__ = ['WebSocketError', 'ProtocolError', 'InvalidDataError',
-           'ConnectionClosedError']
-
 class WebSocketError(Exception):
     """
     Base class for all exceptions.
@@ -24,9 +21,9 @@ class ProtocolError(WebSocketError):
         """
         __init__(message, code=None) -> None
 
-        Initialize a ProtocolError instance. message is passed
-        to the superclass constructor, code is stored in the
-        same-named attribute.
+        Initialize a ProtocolError instance. message is passed to the
+        superclass constructor, code is stored in the same-named
+        attribute.
         """
         WebSocketError.__init__(self, message)
         self.code = code

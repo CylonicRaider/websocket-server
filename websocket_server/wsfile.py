@@ -65,34 +65,37 @@ class WebSocketFile(object):
 
     Attributes:
     server_side  : Whether this is a server-side WebSocketFile
-    close_wrapped: Whether calling close() should close the underlying files
-                   as well. Defaults to True.
+    close_wrapped: Whether calling close() should close the underlying
+                   files as well. Defaults to True.
     _rdlock      : threading.RLock instance used for serializing and
                    protecting reading-related operations.
     _wrlock      : threading.RLock instance user for serializing and
                    protecting write-related operations.
                    _rdlock should always be asserted before _wrlock, if at
-                   all; generally don't call reading-related methods (which
-                   also include close*()) with _wrlock asserted, and don't
-                   use those locks unless necessary. Make your own.
-    _socket      : Underlying socket (set by the client and server modules).
-                   May not be present at all. Only use this if you are really
-                   sure you need to.
+                   all; generally don't call reading-related methods
+                   (which also include close*()) with _wrlock asserted,
+                   and don't use those locks unless necessary. Make your
+                   own.
+    _socket      : Underlying socket (set by the client and server
+                   modules).
+                   May not be present at all (i.e. be None). Only use this
+                   if you are really sure you need to.
 
     Class attributes:
     MAXFRAME    : Maximum frame payload length. May be overridden by
                   subclasses (or instances). Value is either an integer or
                   None (indicating no limit). This is not enforced for
                   outgoing messages.
-    MAXCONTFRAME: Maximum length of a frame reconstructed from fragments. May
-                  be overridden as well. The value has the same semantics as
-                  the one of MAXFRAME. This is not enforced for outgoing
-                  messages as well.
+    MAXCONTFRAME: Maximum length of a frame reconstructed from fragments.
+                  May be overridden as well. The value has the same
+                  semantics as the one of MAXFRAME. This is not enforced
+                  for outgoing messages as well.
 
-    NOTE: This class reads exactly the amount of bytes needed, yet buffering
-          of the underlying stream may cause frames to "congest".
-          The underlying stream must be blocking, or unpredictable behavior
-          occurs.
+    NOTE: This class reads exactly the amount of bytes needed, yet
+          buffering of the underlying stream may cause frames to
+          "congest".
+          The underlying stream must be blocking, or unpredictable
+          behavior occurs.
     """
 
     # Maximum allowed frame length.
@@ -104,7 +107,8 @@ class WebSocketFile(object):
     @classmethod
     def from_files(cls, rdfile, wrfile, server_side=False):
         """
-        from_files(cls, rdfile, wrfile, server_side=False) -> WebSocketFile
+        from_files(cls, rdfile, wrfile, server_side=False)
+            -> WebSocketFile
 
         Equivalent to the constructor; provided for symmetry.
         """
@@ -115,8 +119,8 @@ class WebSocketFile(object):
         """
         from_socket(cls, socket, server_side=False) -> WebSocketFile
 
-        Wrap a socket in a WebSocketFile. Uses the makefile() method
-        to obtain the file objects internall used.
+        Wrap a socket in a WebSocketFile. Uses the makefile() method to
+        obtain the file objects internall used.
         """
         return cls.from_file(socket.makefile('rwb'), server_side)
 
@@ -260,9 +264,9 @@ class WebSocketFile(object):
         returned.
         MAXFRAME is applied.
         May raise ProtocolError (via error()) if the data received is
-        invalid, is truncated, an invalid (non-)continuation frame
-        is read, EOF inside an unfinished fragmented frame is
-        encountered, etc.
+        invalid, is truncated, an invalid (non-)continuation frame is
+        read, EOF inside an unfinished fragmented frame is encountered,
+        etc.
         """
         with self._rdlock:
             # Store for later.
@@ -368,17 +372,17 @@ class WebSocketFile(object):
         read_frame(stream=False) -> (msgtype, data, final) or None
 
         Read a WebSocket data frame.
-        The return value is composed from fields of the same meaning
-        as from read_single_frame(). Note that the opcode field is
-        discarded in favor of msgtype. The return value is (as in
+        The return value is composed from fields of the same meaning as
+        from read_single_frame(). Note that the opcode field is discarded
+        in favor of msgtype. The return value is (as in
         read_single_frame()), a named tuple, with the field names as
         indicated. If the stream encounters an EOF, returns None.
         If stream is false, fragmented frames are re-combined into a
         single frame (MAXCONTFRAME is applied), otherwise, they are
         returned individually.
-        If the beginning of a fragmented frame was already consumed,
-        the remainder of it (or one frame of the remainder, depending
-        on stream) is read.
+        If the beginning of a fragmented frame was already consumed, the
+        remainder of it (or one frame of the remainder, depending on
+        stream) is read.
         May raise ProtocolError (if read_single_frame() does), or
         InvalidDataError, if decoding a text frame fails.
         NOTE: The data returned may not correspond entirely to the
@@ -433,8 +437,8 @@ class WebSocketFile(object):
         Handle a control frame.
         Called by read_frame() if a control frame is read, to evoke a
         required response "as soon as practical".
-        The return value tells whether it is safe to continue reading (true),
-        or if EOF (i.e. a close frame) was reached (false).
+        The return value tells whether it is safe to continue reading
+        (true), or if EOF (i.e. a close frame) was reached (false).
         """
         if opcode == constants.OP_PING:
             self.write_single_frame(constants.OP_PONG, cnt)
@@ -468,15 +472,15 @@ class WebSocketFile(object):
 
         Write a frame with the given parameters.
         final determines whether the frame is final; opcode is one of the
-        OP_* constants; data is the payload of the message. maskkey, if not
-        None, is a length-four byte sequence that determines which mask key
-        to use, otherwise, tools.new_mask() will be invoked to create one
-        if necessary.
+        OP_* constants; data is the payload of the message. maskkey, if
+        not None, is a length-four byte sequence that determines which
+        mask key to use, otherwise, tools.new_mask() will be invoked to
+        create one if necessary.
         If opcode is OP_TEXT, data may be a Unicode or a byte string,
         otherwise, data must be a byte string. If the type of data is
         inappropriate, TypeError is raised.
-        Raises ConnectionClosedError is the connection is already closed or
-        closing.
+        Raises ConnectionClosedError is the connection is already closed
+        or closing.
         """
         # Validate arguments.
         if not constants.OP_MIN <= opcode <= constants.OP_MAX:
@@ -563,12 +567,14 @@ class WebSocketFile(object):
         """
         close_ex(code=None, message=None, wait=False) -> None
 
-        Close the underlying connection, delivering the code and message (if
-        given) to the other point. If code is None, message is ignored. If
-        message is a Unicode string, it is encoded using UTF-8. If wait is
-        true, this will read frames from self until the other side
-        acknowledges the close; as this may cause data loss, be careful.
-        If the connection is already closed, the method has no effect.
+        Close the underlying connection, delivering the code and message
+        (if given) to the other point. If code is None, message is
+        ignored. If message is a Unicode string, it is encoded using
+        UTF-8. If wait is true, this will read frames from self until the
+        other side acknowledges the close; as this may cause data loss, be
+        careful.
+        If the connection is already closed, the method has no effect
+        (but might raise an exception if encoding code or message fails).
         """
         # Construct payload.
         payload = bytearray()
@@ -606,10 +612,10 @@ class WebSocketFile(object):
         """
         close(message=None, wait=False) -> None
 
-        Close the underlying connection with a code of CLOSE_NORMAL
-        and the (optional) given message. If wait is true, this will
-        read frames from self until the other side acknowledges the
-        close; as this may cause data loss, be careful.
+        Close the underlying connection with a code of CLOSE_NORMAL and
+        the (optional) given message. If wait is true, this will read
+        frames from self until the other side acknowledges the close; as
+        this may cause data loss, be careful.
         """
         self.close_ex(constants.CLOSE_NORMAL, message, wait)
 

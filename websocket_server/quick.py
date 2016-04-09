@@ -31,7 +31,8 @@ def parse_http_timestamp(date):
 
     Parse a timestamp as present in HTTP headers. Return the corresponding
     UNIX time value.
-    Convenience wrapper around email.utils.parsedate() and calendar.timegm().
+    Convenience wrapper around email.utils.parsedate() and
+    calendar.timegm().
     """
     return calendar.timegm(email.utils.parsedate(date))
 def format_http_timestamp(ts):
@@ -54,45 +55,48 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 class FileCache:
     """
-    FileCache(webroot, cnttypes=None, filter=None, **config) -> new instance
+    FileCache(webroot, cnttypes=None, filter=None, **config)
+        -> new instance
 
     Helper for caching and delivering static files.
 
     Constructor parameters (taken over as attributes):
     webroot : Base directory to resolve paths against, as a string; if a
               dictionary, expected to be a path-filename mapping similarly
-              to the string option (relative filenames are resolved relative
-              to the current working directory); if callable, it is expected
-              to produce Entries for the path given as the only positional
-              argument; the Ellipsis singleton may be returned to indicate
-              that a path is actually a directory, or None if the path does
-              not exist.
+              to the string option (relative filenames are resolved
+              relative to the current working directory); if callable, it
+              is expected to produce Entries for the path given as the
+              only positional argument; the Ellipsis singleton may be
+              returned to indicate that a path is actually a directory, or
+              None if the path does not exist.
     cnttypes: Mapping of filename extensions (with period) to MIME types.
               None (the default) is cast to an empty dictionary. Unless
               override_cnttypes is true, the class-level CNTTYPES
               attribute is merged to amend missing keys.
 
     Keyword-only parameters:
-    filter           : A callable or a container for whitelisting paths. If
-                       callable, this is called before every access to a
-                       resource with the virtual path as only argument to
-                       determing whether the request is valid or should be
-                       rejected; if not callable, a membership test will be
-                       performed (like, path in filter) to determine whether
-                       the access should be allowed; this way, either a call-
-                       back or a precomputed list can be specified. A filter
-                       of None (the default) admits all paths.
+    filter           : A callable or a container for whitelisting paths.
+                       If callable, this is called before every access to
+                       a resource with the virtual path as only argument
+                       to determing whether the request is valid or should
+                       be rejected; if not callable, a membership test
+                       will be performed (like, path in filter) to
+                       determine whether the access should be allowed;
+                       this way, either a call-back or a precomputed list
+                       can be specified. A filter of None (the default)
+                       admits all paths.
     handle_dirs      : Handle directories. If true (as the default is),
-                       access to directories is treated specially: If a path
-                       that maps to a directory is requested, a trailing
-                       slash (if not already present) is appended by
-                       redirecting the client (temporarily), then a file
-                       called "index.html" is delivered, instead of the
-                       directory (if it exists). Because of the redirecting,
-                       Entry.send() cannot be used for this, and the send()
-                       method of FileCache must be used (which implements
-                       this). If this is false, the redirection does not
-                       happen, and send() treats directories as absent.
+                       access to directories is treated specially: If a
+                       path that maps to a directory is requested, a
+                       trailing slash (if not already present) is appended
+                       by redirecting the client (temporarily), then a
+                       file called "index.html" is delivered, instead of
+                       the directory (if it exists). Because of the
+                       redirecting, Entry.send() cannot be used for this,
+                       and the send() method of FileCache must be used
+                       (which implements this). If this is false, the
+                       redirection does not happen, and send() treats
+                       directories as absent.
     override_cnttypes: If true, the class attribute CNTTYPES will not be
                        considered while creating the content type mapping
                        (default is false; not taken over as an attribute).
@@ -106,10 +110,10 @@ class FileCache:
     CNTTYPES: Default content type mapping. Contains values for .txt,
               .html, .css, .js, and .ico files.
               NOTE: The mappings for .html and .txt include charset
-                    specification clauses (both "charset=utf-8"). If
-                    your files are not encoded in UTF-8, you can either
-                    override the value, or remember that you live in
-                    the third millenium.
+                    specification clauses (both "charset=utf-8"). If your
+                    files are not encoded in UTF-8, you can either
+                    override the value, or remember that you live in the
+                    third millenium.
     """
 
     CNTTYPES = {'.txt': 'text/plain; charset=utf-8',
@@ -121,7 +125,7 @@ class FileCache:
     class Entry:
         """
         Entry(parent, path, data, updated=None, cnttype=None, source=None,
-            **kwds) -> new instance
+              **kwds) -> new instance
 
         Entry of a FileCache.
 
@@ -139,9 +143,8 @@ class FileCache:
         Extra keyword arguments are ignored.
 
         Instance variables (apart from constructor parameters):
-        etag   : Entity tag. Unique identifier of the ressource in its
-                 current state. Implemented as a hash of cnttype, updated,
-                 and data.
+        etag: Entity tag. Unique identifier of the ressource in its current
+              state. Implemented as a hash of cnttype, updated, and data.
         """
 
         @classmethod
@@ -151,8 +154,8 @@ class FileCache:
 
             Read an Entry from a file. data and updated are automatically
             inferred derived from the file itself; further keyword arguments
-            are passed through to the constructor. If cnttype is None, it
-            is automatically inferred from the filename extension.
+            are passed through to the constructor. If cnttype is None, it is
+            automatically inferred from the filename extension.
             """
             with open(source, 'rb') as f:
                 try:
@@ -171,7 +174,7 @@ class FileCache:
                      source=None, **kwds):
             """
             __init__(parent, path, data, updated=None, cnttype=None,
-                source=None, **kwds) -> None
+                     source=None, **kwds) -> None
 
             See class docstring for details.
             """
@@ -191,11 +194,11 @@ class FileCache:
             """
             validate() -> Entry
 
-            Verify that this Entry is still up-to-date, if not so, return
-            a replacement, otherwise, return self.
+            Verify that this Entry is still up-to-date, if not so, return a
+            replacement, otherwise, return self.
 
-            This should be called regularly to ensure the resource served
-            is still up-to-date.
+            This should be called regularly to ensure the resource served is
+            still up-to-date.
             """
             if self.source is not None:
                 st = os.stat(self.source)
@@ -210,8 +213,8 @@ class FileCache:
 
             Deliver the data from the Entry to given BaseHTTPRequestHandler
             (or an instance of a subclass). Unless force is true, request
-            headers are evaluated to decide whether a 304 Not Modified or
-            a 200 OK should be sent.
+            headers are evaluated to decide whether a 304 Not Modified or a
+            200 OK should be sent.
             """
             send_full = True
             if not force:
@@ -269,11 +272,11 @@ class FileCache:
         """
         get(path, **kwds) -> Entry or Ellipsis or None
 
-        Get an Entry for the given path. Either validate a cached one,
-        or create a new one. If the path does not pass self.filter, None
-        is returned without performing any further action. If the path
-        is pointing to a directory (as determined by filesystem inspection
-        or the callable self.webroot), Ellipsis is returned. Keyword
+        Get an Entry for the given path. Either validate a cached one, or
+        create a new one. If the path does not pass self.filter, None is
+        returned without performing any further action. If the path is
+        pointing to a directory (as determined by filesystem inspection or
+        the callable self.webroot), Ellipsis is returned. Keyword
         arguments are passed to either self.webroot (if that is called),
         or to the class-level read() method.
         """
@@ -312,15 +315,14 @@ class FileCache:
         """
         send(handler, path=None, **kwds) -> Entry or Ellipsis or None
 
-        Send the resource named by path to handler. If path is None,
-        the handler's path attribute (minus the query) is used.
-        Directories are handled if the handle_dirs attribute is true;
-        see the description in the class docstring for details.
+        Send the resource named by path to handler. If path is None, the
+        handler's path attribute (minus the query) is used.
+        Directories are handled if the handle_dirs attribute is true; see
+        the description in the class docstring for details.
         Keyword arguments are passed through to the get() method.
         The return value is an Entry if a page was served successfully,
-        Ellipsis if an automatic redirection happened, or None if
-        nothing could be done (the caller might serve a 404 page
-        instead).
+        Ellipsis if an automatic redirection happened, or None if nothing
+        could be done (the caller might serve a 404 page instead).
         """
         if path is None: path = handler.path.partition('?')[0]
         res = self.get(path, **kwds)
@@ -352,14 +354,15 @@ def run(handler, server=ThreadingHTTPServer, prepare=None):
     handler is the handler class to use,
     server  is a callable taking two arguments that creates the server
             instance; the arguments are:
-            bindaddr: A (host, port) tuple containing the address to bind to.
-                      Constructed from command-line arguments.
-            handler : The request handler. Passed through from the same-named
-                      argument of run().
-    prepare is a callable that is invoked with the optparse.OptionParser
-            instance used to parse options as the only argument. Can be used
-            to specify additional options, it is up to the caller's
-            discretion to distribute them to server or handler.
+            bindaddr: A (host, port) tuple containing the address to bind
+                      to. Constructed from command-line arguments.
+            handler : The request handler. Passed through from the same-
+                      named argument of run().
+    prepare is a callable that is invoked with the OptionParser (from
+            optparse) instance used to parse options as the only argument.
+            Can be used to specify additional options; it is up to the
+            caller's discretion to distribute the values to server or
+            handler.
     """
     # Parse command-line arguments.
     p = optparse.OptionParser()
