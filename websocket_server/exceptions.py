@@ -5,6 +5,10 @@
 Exceptions.
 """
 
+# For __init__
+__all__ = ['WebSocketError', 'ProtocolError', 'InvalidDataError',
+           'ConnectionClosedError']
+
 class WebSocketError(Exception):
     """
     Base class for all exceptions.
