@@ -33,7 +33,6 @@ class TweakHTTPResponse(httplib.HTTPResponse):
 
     Subclass of httplib.HTTPResponse overriding the behavior of automatically
     closing 101 Switching Protocols responses.
-    Seriously, did anyone of them even *know* of this status code?
     """
     def begin(self):
         httplib.HTTPResponse.begin(self)
