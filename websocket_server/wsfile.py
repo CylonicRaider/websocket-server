@@ -332,14 +332,14 @@ class WebSocketFile(object):
                     msk = self._readinto_raw(masklen)
                 elif length == 126:
                     buf = self._readinto_raw(2 + masklen)
-                    length = struct.unpack('!H', buf[:2])
+                    length = struct.unpack('!H', buf[:2])[0]
                     # Validate length
                     if length < 126:
                         self._error('Invalid frame length encoding')
                     if masked: msk = buf[2:6]
                 elif length == 127:
                     buf = self._readinto_raw(4 + masklen)
-                    length = struct.unpack('!Q', buf[:4])
+                    length = struct.unpack('!Q', buf[:4])[0]
                     # Validate length.
                     if length < 65536:
                         self._error('Invalid frame length encoding')
