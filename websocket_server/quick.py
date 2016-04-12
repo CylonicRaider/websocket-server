@@ -310,7 +310,7 @@ class FileCache:
             if ent and ent is not Ellipsis:
                 ent = ent.validate()
             elif callable(self.webroot):
-                ent = self.webroot(path, **kwds)
+                ent = self.webroot(self, path, **kwds)
             else:
                 if isinstance(self.webroot, dict):
                     try:
@@ -393,7 +393,7 @@ def callback_producer(callback, base='', guess_type=True):
         if base is not None:
             path = os.path.join(base, normalize_path(path))
         try:
-            data = callback(base)
+            data = callback(path)
         except IOError as e:
             if e.errno == errno.EISDIR:
                 return Ellipsis
