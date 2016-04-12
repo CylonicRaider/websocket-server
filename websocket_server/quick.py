@@ -114,6 +114,8 @@ class FileCache:
                     files are not encoded in UTF-8, you can either
                     override the value, or remember that you live in the
                     third millenium.
+                    If you have somehow got this module into the past, you
+                    are on your own.
     """
 
     CNTTYPES = {'.txt': 'text/plain; charset=utf-8',
