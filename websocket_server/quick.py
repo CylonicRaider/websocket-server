@@ -304,7 +304,8 @@ class FileCache:
                     source = path
                     if source[:1] in ('/', os.sep):
                         source = source[1:]
-                    nwr = os.path.normpath(self.webroot)
+                    nwr = os.path.normpath(os.path.join(self.webroot,
+                                                        os.sep))
                     source = os.path.normpath(os.path.join(nwr, source))
                     if not source.startswith(nwr):
                         return None
