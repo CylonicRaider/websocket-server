@@ -5,7 +5,8 @@
 Convenience functions for quick usage.
 """
 
-import sys, os
+import sys, os, time
+import errno
 import calendar
 import hashlib
 import optparse
@@ -23,7 +24,7 @@ try:
 except ImportError:
     from socketserver import ThreadingMixIn
 
-__all__ = ['run', 'FileCache']
+__all__ = ['run', 'callback_producer', 'normalize_path', 'FileCache']
 
 def parse_http_timestamp(date):
     """
@@ -43,6 +44,22 @@ def format_http_timestamp(ts):
     Convenience wrapper around email.utils.formatdate().
     """
     return email.utils.formatdate(ts, usegmt=True)
+
+def normalize_path(path):
+    """
+    normalize_path(path) -> str
+
+    This makes a "normalize" relative path out of path, suitable to be
+    safely joined with some directory path.
+    path is first made absolute (by prepending os.path.sep), then
+    os.path.normpath() is applied, after which the path is made relative
+    (by removing all leading parent directory references).
+    """
+    path = os.path.normpath(os.path.sep + path)
+    # *Should* run only once...
+    while path.startswith(os.path.sep):
+        path = path[len(os.path.sep):]
+    return path
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """
@@ -65,8 +82,8 @@ class FileCache:
               dictionary, expected to be a path-filename mapping similarly
               to the string option (relative filenames are resolved
               relative to the current working directory); if callable, it
-              is expected to produce Entries for the path given as the
-              only positional argument; the Ellipsis singleton may be
+              is expected to produce Entries for self and the path given
+              as positional arguments; the Ellipsis singleton may be
               returned to indicate that a path is actually a directory, or
               None if the path does not exist.
     cnttypes: Mapping of filename extensions (with period) to MIME types.
@@ -301,14 +318,8 @@ class FileCache:
                     except KeyError:
                         return None
                 else:
-                    source = path
-                    if source[:1] in ('/', os.sep):
-                        source = source[1:]
-                    nwr = os.path.normpath(os.path.join(self.webroot,
-                                                        os.sep))
-                    source = os.path.normpath(os.path.join(nwr, source))
-                    if not source.startswith(nwr):
-                        return None
+                    source = normalize_path(path)
+                    source = os.path.join(self.webroot, source)
                 if os.path.isdir(source):
                     ent = Ellipsis
                 elif os.path.isfile(source):
@@ -352,6 +363,55 @@ class FileCache:
                 return None
         res.send(handler)
         return res
+
+def callback_producer(callback, base='', guess_type=True):
+    """
+    callback_producer(callback, base='', guess_type=True) -> function
+
+    The returns a callable suitable as a webroot for FileCache that uses
+    callback to obtain the data for a given path and wraps them in an
+    FileCache.Entry.
+    callback is called with the path as the only argument, and is expected
+    to return a byte string containing the data to deliver. If callback
+    returns None or Ellipsis or an Entry instance, those are passed
+    through; if it raises an IOError, a EISDIR is translated to an
+    Ellipsis return value, and all other exceptions result in a None
+    return. MIME type guessing is performed (basing on the path) if
+    guess_type is true. Since the Entry is not actually tied to a
+    filesystem object (as far as we know), its source attribute is None.
+    If base is None, the path is passed without modification, otherwise,
+    it is normalized first (see normalize_path()) and joined with base; if
+    base is the empty string, the path is effectively only normalized.
+    """
+    def produce(parent, path):
+        """
+        produce(parent, path) -> FileCache.Entry
+
+        Callback-based Entry producer for FileCache. See callback_producer()
+        for details.
+        """
+        if base is not None:
+            path = os.path.join(base, normalize_path(path))
+        try:
+            data = callback(base)
+        except IOError as e:
+            if e.errno == errno.EISDIR:
+                return Ellipsis
+            else:
+                return None
+        if data in (None, Ellipsis) or isinstance(data, FileCache.Entry):
+            return data
+        if guess_type:
+            for k, v in parent.cnttypes.items():
+                if path.endswith(k):
+                    cnttype = v
+                    break
+            else:
+                cnttype = None
+        else:
+            cnttype = None
+        return FileCache.Entry(parent, path, data, time.time(), cnttype)
+    return produce
 
 def run(handler, server=ThreadingHTTPServer, prepare=None):
     """
