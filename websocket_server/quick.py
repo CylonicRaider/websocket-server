@@ -302,8 +302,12 @@ class FileCache:
                         return None
                 else:
                     source = path
-                    if source[:1] in '/\\': source = source[1:]
-                    source = os.path.join(self.webroot, source)
+                    if source[:1] in ('/', os.sep):
+                        source = source[1:]
+                    nwr = os.path.normpath(self.webroot)
+                    source = os.path.normpath(os.path.join(nwr, source))
+                    if not source.startswith(nwr):
+                        return None
                 if os.path.isdir(source):
                     ent = Ellipsis
                 elif os.path.isfile(source):
