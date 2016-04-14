@@ -8,13 +8,13 @@ Various tools and utilities.
 import os
 import re
 
-from .compat import bytes, xrange
+from .compat import bytearray, xrange
 
 __all__ = ['mask', 'new_mask', 'parse_paramlist']
 
-def mask(mask, data):
+def mask(key, data):
     """
-    mask(mask, data) -> bytearray
+    mask(key, data) -> bytearray
 
     Given a four-byte mask and an arbitrary-length data bytearray, mask /
     unmask the latter.
@@ -22,7 +22,7 @@ def mask(mask, data):
     is returned in any case.
     """
     for i in xrange(len(data)):
-        data[i] ^= mask[i % 4]
+        data[i] ^= key[i % 4]
     return data
 
 def new_mask():
@@ -41,7 +41,7 @@ TOKEN_RE = re.compile(r'[^\0-\040\177()<>@,;:\\"/[\]?={}]+')
 # or quoted pairs enclosed by quotes.
 QSTRING_RE = re.compile(r'"([^"]|\\.)*"')
 # Any non-empty sequence of "linear whitespace".
-LWS_RE = re.compile('\s+')
+LWS_RE = re.compile(r'\s+')
 
 # Complete parameter regex.
 PARAM_RE = re.compile(r'\s*(%s)\s*(=\s*(%s|%s)\s*)?' % (TOKEN_RE.pattern,

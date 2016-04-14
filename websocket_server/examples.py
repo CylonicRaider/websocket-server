@@ -13,7 +13,7 @@ import pkgutil
 
 from .exceptions import ProtocolError
 from .server import WebSocketRequestHandler
-from .quick import FileCache, run
+from .quick import run # FileCache not used for now
 
 __all__ = ['EchoRequestHandler']
 

@@ -20,9 +20,9 @@ try:
 except ImportError:
     import http.client as httplib
 try:
-    from urlparse import urlsplit, urlunsplit
+    from urlparse import urlsplit, urlunsplit, urljoin
 except ImportError:
-    from urllib.parse import urlsplit, urlunsplit
+    from urllib.parse import urlsplit, urlunsplit, urljoin
 
 __all__ = ['connect']
 
@@ -60,13 +60,17 @@ def connect(url, protos=None, **config):
     related error occurs (such as failure to authenticate or redirect), or
     whatever the underlying connection classes raise.
     """
-    # Allow connection reuse.
-    conn = None
+    # Allow connection reuse; prevent redirect loops.
+    conn, connect_count = None, 32
     # Exceptions can occur anywhere.
     rdfile, wrfile = None, None
     try:
         # May need to follow redirections, autheticate, etc.
         while 1:
+            # Check for redirect loops.
+            if connect_count < 0:
+                raise httplib.HTTPException('Redirect loop')
+            connect_count -= 1
             # Split URL.
             res = urlsplit(url)
             # Create connection.
@@ -86,7 +90,7 @@ def connect(url, protos=None, **config):
                 raise ValueError('Bad URL scheme.')
             # Construct headers.
             headers = {'Connection': 'Upgrade', 'Upgrade': 'websocket',
-                    'Sec-WebSocket-Version': '13'}
+                       'Sec-WebSocket-Version': '13'}
             # Subprotocols.
             if isinstance(protos, str):
                 headers['Sec-WebSocket-Protocol'] = protos

@@ -351,8 +351,8 @@ class WebSocketFile(object):
                     if masked: msk = buf[4:8]
                 # Validate length.
                 if self.MAXFRAME is not None and length > self.MAXFRAME:
-                    self._error('Frame too long',
-                                code=constants.CLOSE_MESSAGE_TOO_BIG)
+                    self.error('Frame too long',
+                               code=constants.CLOSE_MESSAGE_TOO_BIG)
                 # Allocate result buffer.
                 rbuf = bytearray(length)
                 # Read rest of message.
@@ -412,8 +412,8 @@ class WebSocketFile(object):
                 # Enforce MAXCONTFRAME
                 if (self.MAXCONTFRAME is not None and
                         buflen + len(payload) > self.MAXCONTFRAME):
-                    self._error('Fragmented frame too long',
-                                code=constants.CLOSE_MESSAGE_TOO_BIG)
+                    self.error('Fragmented frame too long',
+                               code=constants.CLOSE_MESSAGE_TOO_BIG)
                 # Prepare value for returning.
                 datum = Message(fr.msgtype, payload, fr.final)
                 # Regard streaming mode.
