@@ -7,6 +7,7 @@ Convenience functions for quick usage.
 
 import sys, os, time
 import errno
+import socket
 import calendar
 import hashlib
 import optparse
@@ -68,7 +69,14 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     Necessary for parallel use by many clients.
     Used by run().
     """
-    pass
+    def server_bind(self):
+        """
+        server_bind(self) -> None
+
+        Overrides the default implementation to allow quick restarts.
+        """
+        HTTPServer.server_bind(self)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
 class FileCache:
     """
