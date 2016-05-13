@@ -24,12 +24,6 @@ except NameError:
     # Py3K
     xrange = range
 
-try: # Py2K and recent Py3K
-    callable = callable
-except NameError:
-    # Python 3.0 and 3.1.
-    callable = lambda x: hasattr(x, '__call__')
-
 import sys as _sys
 if _sys.version_info[0] <= 2:
     def tobytes(s):

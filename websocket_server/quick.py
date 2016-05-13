@@ -14,7 +14,11 @@ import optparse
 import threading
 import email.utils
 
-from .compat import callable
+try: # Py2K and recent Py3K
+    callable = callable
+except NameError:
+    # Python 3.0 and 3.1.
+    callable = lambda x: hasattr(x, '__call__')
 
 try:
     from BaseHTTPServer import HTTPServer
