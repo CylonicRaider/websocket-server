@@ -421,12 +421,13 @@ def callback_producer(callback, base='', guess_type=True):
         return FileCache.Entry(parent, path, data, time.time(), cnttype)
     return produce
 
-def run(handler, server=ThreadingHTTPServer, prepare=None):
+def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
     """
-    run(handler, server=ThreadingHTTPServer, prepare=None) -> None
+    run(handler, server=ThreadingHTTPServer, prepare=None, premain=None)
+        -> None
 
     Actually run a WebSocket server instance.
-    handler is the handler class to use,
+    handler is the handler class to use.
     server  is a callable taking two arguments that creates the server
             instance; the arguments are:
             bindaddr: A (host, port) tuple containing the address to bind
@@ -435,9 +436,14 @@ def run(handler, server=ThreadingHTTPServer, prepare=None):
                       named argument of run().
     prepare is a callable that is invoked with the OptionParser (from
             optparse) instance used to parse options as the only argument.
-            Can be used to specify additional options; it is up to the
-            caller's discretion to distribute the values to server or
-            handler.
+            Can be used to specify additional options.
+    premain is called immediately before entering the main loop of the
+            internally created server object with three arguments:
+            httpd    : The server object created; an instance of server.
+            options  : The options as returned by optparse.OptionParser.
+            arguments: The arguments as returned by the latter.
+            It can be used to pass on the values of the options configured
+            using prepare to the server object and the handler class.
     """
     # Parse command-line arguments.
     p = optparse.OptionParser()
@@ -461,6 +467,8 @@ def run(handler, server=ThreadingHTTPServer, prepare=None):
     else:
         sys.stderr.write('Serving HTTP on port %s...\n' % options.port)
     sys.stderr.flush()
+    # Call second preparation hook
+    if premain: premain(httpd, options, arguments)
     # Run it.
     try:
         httpd.serve_forever()
