@@ -126,6 +126,14 @@ class FileCache:
                        (which implements this). If this is false, the
                        redirection does not happen, and send() treats
                        directories as absent.
+    append_html      : If a file is absent and this is true (as the default
+                       is not), FileCache.send() tries delivering the file
+                       with the ".html" suffix appended to the name before
+                       failing. Although this could be implemented in
+                       Entry.send(), it is in FileCache.send() for symmetry
+                       with handle_dirs. Can be used to provide "action
+                       paths" (such as "/login") whilst keeping semantic
+                       file extensions.
     override_cnttypes: If true, the class attribute CNTTYPES will not be
                        considered while creating the content type mapping
                        (default is false; not taken over as an attribute).
@@ -288,6 +296,7 @@ class FileCache:
         self.cnttypes = cnttypes
         self.filter = config.get('filter', None)
         self.handle_dirs = config.get('handle_dirs', True)
+        self.append_html = config.get('append_html', False)
         self.entries = {}
         if not config.get('override_cnttypes'):
             for k, v in self.CNTTYPES.items():
@@ -357,7 +366,15 @@ class FileCache:
         if path is None: path = handler.path.partition('?')[0]
         res = self.get(path, **kwds)
         if not res:
-            return res
+            if not self.append_html: return None
+            path += '.html'
+            res = self.get(path, **kwds)
+            if not res:
+                return None
+            elif res is Ellipsis:
+                # Seriously? You have a directory with a name ending with
+                # ".html"?
+                return None
         elif res is Ellipsis:
             if not self.handle_dirs: return None
             if not path.endswith('/'):
@@ -371,7 +388,7 @@ class FileCache:
             if not res:
                 return res
             elif res is Ellipsis:
-                # Seriously? You named a directory "index.html"?
+                # See above for oddly named directories.
                 return None
         res.send(handler)
         return res
