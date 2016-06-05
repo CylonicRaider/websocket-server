@@ -40,16 +40,18 @@ class TweakHTTPResponse(httplib.HTTPResponse):
             self.length = None
             self.will_close = True
 
-def connect(url, protos=None, **config):
+def connect(url, protos=None, headers=None, **config):
     """
-    connect(url, protos=None, **config) -> WebSocketFile
+    connect(url, protos=None, headers=None, **config) -> WebSocketFile
 
     Connect to the given URL, which is parsed to obtain all necessary
     information. Depending on the scheme (ws or wss), a HTTPConnection or
     a HTTPSConnection is used internally; protos (a list of strings, a
     string, or None) can be used to specify subprotocols; keyword
     arguments can be passed the underlying connection constructor via
-    config.
+    config; headers can be None or a mapping of additional request headers
+    to be added (note that it is expected to implement the mutable mapping
+    protocol and will be modified).
     If the URL contains username or password fields, those will be sent as
     a Basic HTTP authentication header.
     The HTTP connection and response are stored in instance attributes of
@@ -64,6 +66,10 @@ def connect(url, protos=None, **config):
     conn, connect_count = None, 32
     # Exceptions can occur anywhere.
     rdfile, wrfile = None, None
+    # Construct headers.
+    if headers is None: headers = {}
+    headers.update({'Connection': 'Upgrade', 'Upgrade': 'websocket',
+                    'Sec-WebSocket-Version': '13'})
     try:
         # May need to follow redirections, autheticate, etc.
         while 1:
@@ -88,9 +94,6 @@ def connect(url, protos=None, **config):
                 conn.connect()
             else:
                 raise ValueError('Bad URL scheme.')
-            # Construct headers.
-            headers = {'Connection': 'Upgrade', 'Upgrade': 'websocket',
-                       'Sec-WebSocket-Version': '13'}
             # Subprotocols.
             if isinstance(protos, str):
                 headers['Sec-WebSocket-Protocol'] = protos
