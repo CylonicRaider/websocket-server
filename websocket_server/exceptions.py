@@ -34,7 +34,7 @@ class ProtocolError(WebSocketError):
 
 class InvalidDataError(ProtocolError, ValueError):
     """
-    Invalid data has been encountered.
+    Invalid data have been encountered.
     """
     pass
 
