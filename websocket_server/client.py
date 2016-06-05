@@ -157,7 +157,7 @@ def connect(url, protos=None, headers=None, **config):
         ret = wrap(resp, wrfile)
         ret._socket = sock
         ret.request = conn
-        ret.resonse = resp
+        ret.response = resp
         return ret
     except:
         # Clean up connection
