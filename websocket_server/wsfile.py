@@ -401,7 +401,7 @@ class WebSocketFile(object):
                     self.handle_control(fr.opcode, fr.payload)
                     continue
                 # Decode text frames.
-                if fr.opcode == constants.OP_TEXT:
+                if fr.msgtype == constants.OP_TEXT:
                     try:
                         payload = self._decoder.decode(fr.payload,
                                                        fr.final)
