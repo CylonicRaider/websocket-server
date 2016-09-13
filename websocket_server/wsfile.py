@@ -308,7 +308,7 @@ class WebSocketFile(object):
                     if opcode == constants.OP_CONT:
                         # Continuation frame.
                         msgtype = self._cur_opcode
-                        if self._cur_opcode is not None:
+                        if self._cur_opcode is None:
                             # See the error message.
                             self._error('Orphaned continuation frame')
                         elif final:
