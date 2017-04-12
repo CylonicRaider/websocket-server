@@ -7,6 +7,8 @@ Various tools and utilities.
 
 import os
 import re
+import time
+import calendar
 
 from .compat import bytearray, xrange
 
@@ -106,3 +108,48 @@ def parse_paramlist(string, allow_attributes=True):
         return ret
     else:
         return [i[0] for i in ret]
+
+# Preferred datetime format from RFC 2616.
+DATETIME_RE = re.compile((r'^(?P<a>\w+), (?P<d>\d+) (?P<b>\w+) (?P<Y>\d+) '
+    r'(?P<H>\d+):(?P<M>\d+):(?P<S>\d+) GMT$').replace(' ', r'\s+'))
+# Month names.
+MONTHS = { 1: 'Jan',  2: 'Feb',  3: 'Mar',  4: 'Apr',
+           5: 'May',  6: 'Jun',  7: 'Jul',  8: 'Aug',
+           9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+REVMONTHS = dict((v.lower(), k) for k, v in MONTHS.items())
+# Names of days of the week.
+WDAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
+
+def parse_rfc2616_date(s):
+    """
+    parse_rfc2616_date(s) -> int
+
+    Parse a timestamp as it occurs in HTTP and return the corresponding UNIX
+    time.
+    """
+    # Since strptime() depends on the locale, we'll do the parsing ourself.
+    m = DATETIME_RE.match(s.strip())
+    if not m: raise ValueError('Bad date')
+    # Interpret month name.
+    try:
+        month = REVMONTHS[m.group('m').lower()]
+    except KeyError:
+        raise ValueError('Bad date')
+    # Assemble time struct.
+    struct = (int(m.group('Y')), month, int(m.group('d')),
+              int(m.group('H')), int(m.group('M')), int(m.group('S')),
+              0, 0, 0)
+    # Return corresponding timestamp.
+    return calendar.timegm(struct)
+
+def format_rfc2616_date(t):
+    """
+    format_rfc2616_date(t) -> str
+
+    Return a string represententing the given UNIX timestamp suitable for
+    inclusion into HTTP headers.
+    """
+    struct = time.gmtime(t)
+    ret = time.strftime('#a, %d #b %Y %H:%M:%S GMT', struct)
+    return ret.replace('#a', WDAYS[struct[6]]).replace('#b',
+                                                       MONTHS[struct[1]])
