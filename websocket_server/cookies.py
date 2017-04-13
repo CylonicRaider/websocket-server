@@ -11,9 +11,9 @@ insufficient.
 from . import tools
 
 try:
-    from urllib.parse import quote
+    from urllib.parse import quote, unquote
 except ImportError:
-    from urllib import quote
+    from urllib import quote, unquote
 
 __all__ = ['Cookie']
 
@@ -29,6 +29,46 @@ class Cookie(dict):
     Make sure to choose only appropriate names/values; Cookie does not
     empoly any means of automatic escaping.
     """
+
+    @classmethod
+    def parse(cls, string):
+        """
+        parse(string) -> new instance
+
+        Parse the given textual cookie definition and return the equivalent
+        object.
+        """
+        name, value, attrs = None, None, {}
+        for n, token in enumerate(string.split(';')):
+            k, s, v = token.partition('=')
+            if not s: v = None
+            if n == 0:
+                name, value = k, v
+            else:
+                k, v = cls._parse_attr(k, v)
+                attrs[k] = v
+        return cls(name, value, **attrs)
+
+    @classmethod
+    def _parse_attr(cls, key, value):
+        """
+        _parse_attr(key, value) -> (key, value)
+
+        Convert the given cookie attribute to an programmatically usable
+        format. key is the name of the attribute (and always present); value
+        is either the value as a string, or None if no value was given. Both
+        key and value have surrounding whitespace removed.
+        """
+        if not value:
+            return (key, None)
+        elif key == 'Expires':
+            return (key, tools.parse_rfc2616_date(value))
+        elif key == 'Path':
+            return (key, unquote(value))
+        elif key == 'Max-Age':
+            return (key, int(value))
+        else:
+            return (key, value)
 
     def __init__(self, name, value, **attrs):
         """
