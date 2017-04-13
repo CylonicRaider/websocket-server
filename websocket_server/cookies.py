@@ -58,6 +58,9 @@ class Cookie(dict):
         format. key is the name of the attribute (and always present); value
         is either the value as a string, or None if no value was given. Both
         key and value have surrounding whitespace removed.
+        The default implementation turns false values (including empty
+        strings) into None and properly parses the Expires, Path, and Max-Age
+        attributes.
         """
         if not value:
             return (key, None)
