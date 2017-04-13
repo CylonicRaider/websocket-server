@@ -10,6 +10,11 @@ insufficient.
 
 from . import tools
 
+try:
+    from urllib.parse import quote
+except ImportError:
+    from urllib import quote
+
 __all__ = ['Cookie']
 
 class Cookie(dict):
@@ -60,11 +65,13 @@ class Cookie(dict):
         To suppress displaying the attribute altogether, return a false
         value (such as the empty string or None).
         The default implementation returns a bare name if value is
-        None, and properly formats the Expires attribute.
+        None, and properly formats the Expires and Path attributes.
         """
         if value is None:
             return key
         elif key == 'Expires':
             return '%s=%s' % (key, tools.format_rfc2616_date(value))
+        elif key == 'Path':
+            return '%s=%s' % (key, quote(value))
         else:
             return '%s=%s' % (key, value)
