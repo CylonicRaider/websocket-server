@@ -12,32 +12,37 @@ import time
 from . import tools
 
 try:
-    from urllib.parse import quote, unquote
+    from urllib.parse import quote, unquote, urlparse
 except ImportError:
     from urllib import quote, unquote
+    from urlparse import urlparse
 
 __all__ = ['Cookie']
 
 class Cookie(dict):
     """
-    Cookie(name, value, **attributes) -> new instance
+    Cookie(name, value, url=None, **attributes) -> new instance
 
     A single HTTP cookie. name and value are, respectively, the name
-    and value of the cookie; attributes are additional key-value pairs
-    containing meta-information about the cookie. The attributes can
-    be accessed and modified using standard dict operations.
+    and value of the cookie. url is the URL the cookie references, or
+    None; if present, it is used to derive default values for certain
+    attributes (as demanded by the RFC). attributes are additional
+    key-value pairs containing meta-information about the cookie. The
+    attributes can be accessed and modified using standard dict
+    operations.
 
     Make sure to choose only appropriate names/values; Cookie does not
     empoly any means of automatic escaping.
     """
 
     @classmethod
-    def parse(cls, string):
+    def parse(cls, string, url=None):
         """
-        parse(string) -> new instance
+        parse(string, url=None) -> new instance
 
-        Parse the given textual cookie definition and return the equivalent
-        object.
+        Parse the given textual cookie definition and return the
+        equivalent object. url is the URL this cookie was received
+        from.
         """
         name, value, attrs = None, None, {}
         for n, token in enumerate(string.split(';')):
@@ -74,16 +79,18 @@ class Cookie(dict):
         else:
             return (key, value)
 
-    def __init__(self, name, value, **attrs):
+    def __init__(self, name, value, url=None, **attrs):
         """
-        __init__(name, value, **attrs) -> None
+        __init__(name, value, url=None, **attrs) -> None
 
         See class docstring for details.
         """
         dict.__init__(self, **attrs)
         self.name = name
         self.value = value
+        self.url = url
         self._domain = None
+        self._domain_exact = False
         self._path = None
         self._expires = None
         self._created = time.time()
@@ -97,16 +104,19 @@ class Cookie(dict):
         which parts of the state to refresh; if None, everything is
         renewed.
         """
+        purl = urlparse(self.url)
         if attr in ('Domain', None):
             if self.get('Domain'):
                 self._domain = self['Domain'].lower().lstrip('.')
+                self._domain_exact = False
             else:
-                self._domain = None
+                self._domain = purl.hostname
+                self._domain_exact = True
         if attr in ('Path', None):
             if self.get('Path') and self['Path'].startwith('/'):
                 self._path = self['Path']
             else:
-                self._path = None
+                self._path = purl.path
         if attr in ('Expires', 'Max-Age', None):
             if self.get('Max-Age'):
                 self._expires = self._created + self['Max-Age']
