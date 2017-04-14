@@ -4,10 +4,11 @@
 """
 Cookie management utilities.
 
-The ones present in the standard library are, frankly, utterly
-insufficient.
+(Mostly) compliant to RFC 6265. The alternatives present in the
+standard library are, frankly, utterly insufficient.
 """
 
+import time
 from . import tools
 
 try:
@@ -82,6 +83,37 @@ class Cookie(dict):
         dict.__init__(self, **attrs)
         self.name = name
         self.value = value
+        self._domain = None
+        self._path = None
+        self._expires = None
+        self._created = time.time()
+        self._update()
+
+    def _update(self, attr=None):
+        """
+        _update(attr=None) -> None
+
+        Update the internal state of the cookie. attr gives a hint at
+        which parts of the state to refresh; if None, everything is
+        renewed.
+        """
+        if attr in ('Domain', None):
+            if self.get('Domain'):
+                self._domain = self['Domain'].lower().lstrip('.')
+            else:
+                self._domain = None
+        if attr in ('Path', None):
+            if self.get('Path') and self['Path'].startwith('/'):
+                self._path = self['Path']
+            else:
+                self._path = None
+        if attr in ('Expires', 'Max-Age', None):
+            if self.get('Max-Age'):
+                self._expires = self._created + self['Max-Age']
+            elif self.get('Expires'):
+                self._expires = self['Expires']
+            else:
+                self._expires = None
 
     def format(self, attrs=True):
         """
