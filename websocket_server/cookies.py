@@ -100,7 +100,7 @@ class Cookie:
         self._path = None
         self._expires = None
         self._created = time.time()
-        self._update()
+        self._update(None)
 
     def __len__(self):
         """
@@ -181,32 +181,40 @@ class Cookie:
         except KeyError:
             return default
 
-    def _update(self, attr=None):
+    def _update(self, attr):
         """
-        _update(attr=None) -> None
+        _update(attr) -> None
 
         Update the internal state of the cookie. attr gives a hint at
         which parts of the state to refresh; if None, everything is
         renewed.
         """
-        purl = None
-        if attr:
-            attr = attr.lower()
-        if attr in ('domain', None):
+        if attr is None:
+            self._update('Domain')
+            self._update('Path')
+            self._update('Expires')
+            return
+        attr = attr.lower()
+        if attr == 'domain':
             if self.get('Domain'):
                 self._domain = self['Domain'].lower().lstrip('.')
                 self._domain_exact = False
+            elif self.url is None:
+                self._domain = None
+                self._domain_exact = True
             else:
-                if purl is None: purl = urlparse(self.url)
+                purl = urlparse(self.url)
                 self._domain = purl.hostname
                 self._domain_exact = True
-        if attr in ('path', None):
-            if self.get('Path') and self['Path'].startwith('/'):
+        elif attr == 'path':
+            if self.get('Path') and self['Path'].startswith('/'):
                 self._path = self['Path']
+            elif self.url is None:
+                self._path = None
             else:
-                if purl is None: purl = urlparse(self.url)
+                purl = urlparse(self.url)
                 self._path = purl.path
-        if attr in ('expires', 'max-age', None):
+        elif attr in ('expires', 'max-age'):
             if self.get('Max-Age'):
                 self._expires = self._created + self['Max-Age']
             elif self.get('Expires'):
