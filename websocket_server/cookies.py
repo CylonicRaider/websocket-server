@@ -19,6 +19,33 @@ except ImportError:
 
 __all__ = ['Cookie']
 
+def domains_match(base, probe):
+    """
+    domains_match(base, probe) -> bool
+
+    Return whether probe should "match" base if both are interpreted
+    as domain names. Implements RFC6265, Section 5.1.3.
+    """
+    if probe == base:
+        return True
+    elif not probe.endswith(base) or not probe[:-len(base)].endswith('.'):
+        return False
+    elif probe.replace('.', '').isdigit() or ':' in probe:
+        # Crude heuristic to match IP addresses.
+        return False
+    else:
+        return True
+
+def paths_match(base, probe):
+    """
+    paths_match(base, probe) -> bool
+
+    Return whether probe is considered to "match" base if both are
+    interpreted as path names. Implements RFC6265, Section 5.1.4.
+    """
+    return (probe == base or probe.startswith(base) and
+            (base.endswith('/') or probe[len(base):].startswith('/')))
+
 class Cookie:
     """
     Cookie(name, value, url=None, **attributes) -> new instance
@@ -203,7 +230,7 @@ class Cookie:
                 self._domain = None
                 self._domain_exact = True
             else:
-                purl = urlparse(self.url)
+                domain = urlparse(self.url).hostname
                 self._domain = purl.hostname
                 self._domain_exact = True
         elif attr == 'path':
@@ -212,8 +239,13 @@ class Cookie:
             elif self.url is None:
                 self._path = None
             else:
-                purl = urlparse(self.url)
-                self._path = purl.path
+                path = urlparse(self.url).path
+                scnt = path.count('/')
+                if scnt <= 1:
+                    path = '/'
+                else:
+                    path = path[:path.rindex('/')]
+                self._path = path
         elif attr in ('expires', 'max-age'):
             if self.get('Max-Age'):
                 self._expires = self._created + self['Max-Age']
