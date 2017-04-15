@@ -30,7 +30,10 @@ class Cookie:
     key-value pairs containing meta-information about the cookie.
     Cookie implements a bare-bones mapping interface (enough to pass
     the dict constructor and collections.MutableMapping); use that to
-    access/modify cookie attributes.
+    access/modify cookie attributes. Lookup and modification is
+    case-insensitive; iteration preserves the case at the time of
+    insertion (delete and re-add an attribute to force a specific
+    case).
 
     Make sure to choose only appropriate names/values; Cookie does not
     empoly any means of automatic escaping.
@@ -69,13 +72,14 @@ class Cookie:
         strings) into None and properly parses the Expires, Path, and Max-Age
         attributes.
         """
+        lkey = key.lower()
         if not value:
             return (key, None)
-        elif key == 'Expires':
+        elif lkey == 'expires':
             return (key, tools.parse_rfc2616_date(value))
-        elif key == 'Path':
+        elif lkey == 'path':
             return (key, unquote(value))
-        elif key == 'Max-Age':
+        elif lkey == 'max-age':
             return (key, int(value))
         else:
             return (key, value)
@@ -186,7 +190,9 @@ class Cookie:
         renewed.
         """
         purl = None
-        if attr in ('Domain', None):
+        if attr:
+            attr = attr.lower()
+        if attr in ('domain', None):
             if self.get('Domain'):
                 self._domain = self['Domain'].lower().lstrip('.')
                 self._domain_exact = False
@@ -194,13 +200,13 @@ class Cookie:
                 if purl is None: purl = urlparse(self.url)
                 self._domain = purl.hostname
                 self._domain_exact = True
-        if attr in ('Path', None):
+        if attr in ('path', None):
             if self.get('Path') and self['Path'].startwith('/'):
                 self._path = self['Path']
             else:
                 if purl is None: purl = urlparse(self.url)
                 self._path = purl.path
-        if attr in ('Expires', 'Max-Age', None):
+        if attr in ('expires', 'max-age', None):
             if self.get('Max-Age'):
                 self._expires = self._created + self['Max-Age']
             elif self.get('Expires'):
@@ -235,11 +241,12 @@ class Cookie:
         The default implementation returns a bare name if value is
         None, and properly formats the Expires and Path attributes.
         """
+        lkey = key.lower()
         if value is None:
             return key
-        elif key == 'Expires':
+        elif lkey == 'expires':
             return '%s=%s' % (key, tools.format_rfc2616_date(value))
-        elif key == 'Path':
+        elif lkey == 'path':
             return '%s=%s' % (key, quote(value))
         else:
             return '%s=%s' % (key, value)
