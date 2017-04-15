@@ -19,7 +19,7 @@ except ImportError:
 
 __all__ = ['Cookie']
 
-class Cookie(dict):
+class Cookie:
     """
     Cookie(name, value, url=None, **attributes) -> new instance
 
@@ -27,9 +27,10 @@ class Cookie(dict):
     and value of the cookie. url is the URL the cookie references, or
     None; if present, it is used to derive default values for certain
     attributes (as demanded by the RFC). attributes are additional
-    key-value pairs containing meta-information about the cookie. The
-    attributes can be accessed and modified using standard dict
-    operations.
+    key-value pairs containing meta-information about the cookie.
+    Cookie implements a bare-bones mapping interface (enough to pass
+    the dict constructor and collections.MutableMapping); use that to
+    access/modify cookie attributes.
 
     Make sure to choose only appropriate names/values; Cookie does not
     empoly any means of automatic escaping.
@@ -85,16 +86,96 @@ class Cookie(dict):
 
         See class docstring for details.
         """
-        dict.__init__(self, **attrs)
         self.name = name
         self.value = value
         self.url = url
+        self._attrs = attrs
+        self._keys = dict((k.lower(), k) for k in attrs.keys())
         self._domain = None
         self._domain_exact = False
         self._path = None
         self._expires = None
         self._created = time.time()
         self._update()
+
+    def __len__(self):
+        """
+        len(self) -> int
+
+        Return the amount of cookie attributes in self.
+        """
+        return len(self._attrs)
+
+    def __iter__(self):
+        """
+        iter(self) -> iter
+
+        Return an iterator over the names of the cookie attributes in
+        self.
+        """
+        return iter(self._attrs)
+
+    def __contains__(self, key):
+        """
+        key in self -> bool
+
+        Return whether a cookie attribute with the given name exists.
+        """
+        return key.lower() in self._keys
+
+    def __getitem__(self, key):
+        """
+        self[key] -> value
+
+        Retrieve the cookie attribute corresponding to key.
+        """
+        return self._attrs[self._keys[key.lower()]]
+
+    def __setitem__(self, key, value):
+        """
+        self[key] = value
+
+        Set the cookie attribute corresponding to key to value.
+        """
+        lkey = key.lower()
+        try:
+            self._attrs[self._keys[lkey]] = value
+        except KeyError:
+            self._keys[lkey] = key
+            self._attrs[key] = value
+        self._update(lkey)
+
+    def __delitem__(self, key, value):
+        """
+        del self[key]
+
+        Remove the given cookie attribute.
+        """
+        lkey = key.lower()
+        del self._attrs[self._keys[lkey]]
+        del self._keys[lkey]
+
+    def keys(self):
+        """
+        keys() -> Keys
+
+        Return the keys of this mapping (i.e. the cookie attribute
+        names) as a sequence. Depending on the Python version, it is a
+        list or a dynamic view object; be careful.
+        """
+        return self._attrs.keys()
+
+    def get(self, attr, default=None):
+        """
+        get(key, default=None) -> object
+
+        Try to get the value of the given key, or default to default
+        (which, in turn, defaults to None).
+        """
+        try:
+            return self[attr]
+        except KeyError:
+            return default
 
     def _update(self, attr=None):
         """
@@ -104,18 +185,20 @@ class Cookie(dict):
         which parts of the state to refresh; if None, everything is
         renewed.
         """
-        purl = urlparse(self.url)
+        purl = None
         if attr in ('Domain', None):
             if self.get('Domain'):
                 self._domain = self['Domain'].lower().lstrip('.')
                 self._domain_exact = False
             else:
+                if purl is None: purl = urlparse(self.url)
                 self._domain = purl.hostname
                 self._domain_exact = True
         if attr in ('Path', None):
             if self.get('Path') and self['Path'].startwith('/'):
                 self._path = self['Path']
             else:
+                if purl is None: purl = urlparse(self.url)
                 self._path = purl.path
         if attr in ('Expires', 'Max-Age', None):
             if self.get('Max-Age'):
