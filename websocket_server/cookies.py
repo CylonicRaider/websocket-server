@@ -337,6 +337,18 @@ class Cookie:
         """
         return self._matches(parse_url(url))
 
+    def is_fresh(self):
+        """
+        is_fresh() -> bool or Ellipsis
+
+        Return whether this cookie has *not* expired.
+        If the cookie has a expiration date or a maximum age, this
+        returns a bool; otherwise (i.e. for session cookies), Ellipsis
+        (which is true) is returned.
+        """
+        if self._expires is None: return Ellipsis
+        return (time.time() < self._expires)
+
 class CookieJar:
     """
     CookieJar() -> new instance
@@ -446,12 +458,30 @@ class CookieJar:
             pmatch = lambda x: paths_match(path, x)
         self.filter(lambda c: not (dmatch(c.key[0]) and pmatch(c.key[1])))
 
+    def clear_expired(self):
+        """
+        clear_expired() -> None
+
+        Remove all cookies that have expired.
+        """
+        self.filter(lambda c: c.is_fresh())
+
+    def clear_session(self):
+        """
+        clear_session() -> None
+
+        Remove all session-only cookies.
+        """
+        self.filter(lambda c: c.is_fresh() is not Ellipsis)
+
     def query(self, url):
         """
         query(url) -> iterable
 
         Retrieve an iterable (i.e. whatever the builtin filter()
         returns) of cookies that would be delivered to url.
+        Expired cookies are not returned, but not removed from the jar,
+        either; use clear_expired() for cleaning up.
         """
         info = parse_url(url)
-        return filter(self, lambda c: c._matches(info))
+        return filter(self, lambda c: c._matches(info) and c.is_fresh())
