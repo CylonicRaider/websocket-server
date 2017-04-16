@@ -481,7 +481,8 @@ class CookieJar:
         Retrieve an iterable (i.e. whatever the builtin filter()
         returns) of cookies that would be delivered to url.
         Expired cookies are not returned, but not removed from the jar,
-        either; use clear_expired() for cleaning up.
+        either; use clear_expired() and clear_session() for cleaning
+        up.
         """
         info = parse_url(url)
         return filter(self, lambda c: c._matches(info) and c.is_fresh())
