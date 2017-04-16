@@ -152,6 +152,14 @@ class Cookie:
         self._created = time.time()
         self._update(None)
 
+    def __repr__(self):
+        """
+        repr(self) -> str
+
+        Return a programmer-friendly string representation of self.
+        """
+        return '<%s %s>' % (self.__class__.__name__, self.format())
+
     def __len__(self):
         """
         len(self) -> int
@@ -377,6 +385,14 @@ class CookieJar:
         See the class docstring for details.
         """
         self.cookies = {}
+
+    def __repr__(self):
+        """
+        repr(self) -> str
+
+        Return a programmer-friendly string representation of self.
+        """
+        return '<%s%s>' % (self.__class__.__name__, list(self))
 
     def __len__(self):
         """
