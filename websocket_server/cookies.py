@@ -133,6 +133,7 @@ class Cookie:
         self.name = name
         self.value = value
         self.url = url
+        self.key = None
         self._attrs = attrs
         self._keys = dict((k.lower(), k) for k in attrs.keys())
         self._domain = None
@@ -266,6 +267,8 @@ class Cookie:
                 self._expires = self['Expires']
             else:
                 self._expires = None
+        if attr in ('domain', 'path'):
+            self.key = (self._domain, self._path, self.name)
 
     def format(self, attrs=True):
         """
@@ -333,3 +336,99 @@ class Cookie:
         Test whether this cookie would be delivered to url.
         """
         return self._matches(parse_url(url))
+
+class CookieJar:
+    """
+    CookieJar() -> new instance
+
+    A cookie jar contains cookies. This class does indeed implement the
+    storage, management, and retrieval of cookies, providing a
+    dedicated interface for that.
+
+    NOTE that modifying the name, path, or domain of a cookie stored
+         in a CookieJar leads to erratic behavior.
+    """
+
+    def __init__(self):
+        """
+        __init__() -> None
+
+        See the class docstring for details.
+        """
+        self.cookies = {}
+
+    def __len__(self):
+        """
+        len(self) -> int
+
+        Return the amount of cookies stored in self.
+        """
+        return len(self.cookies)
+
+    def __contains__(self, obj):
+        """
+        obj in self -> bool
+
+        Return whether the given cookie is contained in self.
+        """
+        return obj in self.cookies
+
+    def __iter__(self):
+        """
+        iter(self) -> iter
+
+        Return an iterator over all cookies in self.
+        """
+        return iter(self.cookies.values())
+
+    def add(self, cookie):
+        """
+        add(cookie) -> None
+
+        Add the given cookie to self, possibly replacing another one.
+        """
+        self.cookies[cookie.key] = cookie
+
+    def remove(self, cookie):
+        """
+        remove(cookie) -> bool
+
+        Remove the given cookie (or an equivalent) one from self.
+        Returns whether an equivalent cookie was actually present.
+        """
+        try:
+            del self.cookies[cookie.key]
+            return True
+        except KeyError:
+            return False
+
+    def clear(self, domain=None, path=None):
+        """
+        clear(domain=None, path=None) -> None
+
+        Evict some or all cookies from the jar.
+        If domain is not None, only cookies with the given domain are
+        removed; analogously, only cookies matching path are removed
+        if it is given.
+
+        NOTE that the matching relation is reversed in comparison to
+             querying, i.e., evicting cookies for "example.com" will
+             also remove such for "test.example.com".
+             domain and path are normalized similarly to how the Cookie
+             implementation does.
+        """
+        if domain is None and path is None:
+            self.cookies.clear()
+            return
+        if domain is None:
+            dmatch = lambda x: False
+        else:
+            domain = domain.lower().lstrip('.')
+            dmatch = lambda x: domains_match(domain, x)
+        if path is None:
+            pmatch = lambda x: False
+        else:
+            path = '/' if not path.startswith('/') else path.rstrip('/')
+            pmatch = lambda x: paths_match(path, x)
+        self.cookies = dict((k, v) for k, v in self.cookies.items()
+                            if dmatch(k[0]) and pmatch(k[1]))
