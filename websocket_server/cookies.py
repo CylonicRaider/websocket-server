@@ -402,6 +402,20 @@ class CookieJar:
         except KeyError:
             return False
 
+    def filter(self, predicate=None):
+        """
+        filter(predicate=None) -> None
+
+        Apply predicate to all cookies in the jar and remove those for
+        which it did not return something true.
+        If predicate is None, every cookie satisfies it.
+        Since this function recreates the internal cookie store from
+        the keys stored in cookies, it can be used to regain integrity
+        after modifying the domain, path, or name attributes of
+        cookies.
+        """
+        self.cookies = dict((c.key, c) for c in filter(predicate, self))
+
     def clear(self, domain=None, path=None):
         """
         clear(domain=None, path=None) -> None
@@ -430,5 +444,14 @@ class CookieJar:
         else:
             path = '/' if not path.startswith('/') else path.rstrip('/')
             pmatch = lambda x: paths_match(path, x)
-        self.cookies = dict((k, v) for k, v in self.cookies.items()
-                            if dmatch(k[0]) and pmatch(k[1]))
+        self.filter(lambda c: not (dmatch(c.key[0]) and pmatch(c.key[1])))
+
+    def query(self, url):
+        """
+        query(url) -> iterable
+
+        Retrieve an iterable (i.e. whatever the builtin filter()
+        returns) of cookies that would be delivered to url.
+        """
+        info = parse_url(url)
+        return filter(self, lambda c: c._matches(info))
