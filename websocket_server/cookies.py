@@ -19,6 +19,9 @@ except ImportError:
 
 __all__ = ['Cookie']
 
+SECURE_SCHEMES = ['https', 'wss']
+HTTP_SCHEMES = ['http', 'https', 'ws', 'wss']
+
 def domains_match(base, probe):
     """
     domains_match(base, probe) -> bool
@@ -45,6 +48,16 @@ def paths_match(base, probe):
     """
     return (probe == base or probe.startswith(base) and
             (base.endswith('/') or probe[len(base):].startswith('/')))
+
+def parse_url(url):
+    """
+    parse_url(url) -> (str, str, str)
+
+    Parse url and return the scheme, host, and path normalized as
+    convenient for Cookie.match() et al.
+    """
+    purl = urlparse(url)
+    return (purl.scheme.lower(), (purl.hostname or '').lower(), purl.path)
 
 class Cookie:
     """
@@ -290,3 +303,33 @@ class Cookie:
             return '%s=%s' % (key, quote(value))
         else:
             return '%s=%s' % (key, value)
+
+    def _matches(self, info):
+        """
+        _matches(info) -> bool
+
+        Test whether this cookie would be delivered to the location
+        described by info, which is a (scheme, host, path) tuple as
+        returned by parse_url().
+        """
+        if None in (self._domain, self._path): return False
+        # Test scheme.
+        if 'Secure' in self and info[0] not in SECURE_SCHEMES:
+            return False
+        elif 'HttpOnly' in self and info[0] not in HTTP_SCHEMES:
+            return False
+        # Test host.
+        if self._domain_exact:
+            if info[1] != self._domain: return False
+        else:
+            if not domains_match(self._domain, info[1]): return False
+        # Test path.
+        return paths_match(self._path, info[2])
+
+    def matches(self, url):
+        """
+        matches(url) -> bool
+
+        Test whether this cookie would be delivered to url.
+        """
+        return self._matches(parse_url(url))
