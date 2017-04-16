@@ -8,8 +8,10 @@ Cookie management utilities.
 standard library are, frankly, utterly insufficient.
 """
 
+import re
 import time
 from . import tools
+from .compat import bytes, unicode
 
 try:
     from urllib.parse import quote, unquote, urlparse
@@ -17,7 +19,7 @@ except ImportError:
     from urllib import quote, unquote
     from urlparse import urlparse
 
-__all__ = ['Cookie']
+__all__ = ['Cookie', 'CookieJar', 'FileCookieJar', 'CookieLoadError']
 
 SECURE_SCHEMES = ['https', 'wss']
 HTTP_SCHEMES = ['http', 'https', 'ws', 'wss']
@@ -58,6 +60,12 @@ def parse_url(url):
     """
     purl = urlparse(url)
     return (purl.scheme.lower(), (purl.hostname or '').lower(), purl.path)
+
+class CookieLoadError(Exception):
+    """
+    Raised if trying to load cookies from a badly formatted file.
+    """
+    pass
 
 class Cookie:
     """
@@ -486,3 +494,70 @@ class CookieJar:
         """
         info = parse_url(url)
         return filter(self, lambda c: c._matches(info) and c.is_fresh())
+
+class FileCookieJar(CookieJar):
+    """
+    FileCookieJar(file) -> new instance
+
+    A FileCookieJar extends CookieJar by implementing conveniently
+    saving cookies to files and restoring from them.
+    file is a either a file object or a filename. If it's an object,
+    it is expected to be opened in text mode, and should have a read(),
+    a write(), a flush(), a seek(), and a close() method.
+    The format used should be compatible to LWPCookieJar from the
+    standard library.
+    """
+
+    def __init__(self, file):
+        """
+        __init__(file) -> None
+
+        See class docstring for details.
+        """
+        CookieJar.__init__(self)
+        self._file = file
+        if isinstance(file, (str, unicode)):
+            self.file = open(file, 'r+')
+        else:
+            self.file = file
+
+    def save(self):
+        """
+        save() -> None
+
+        Serialize the cookies into the file. Replaces the file.
+        """
+        self.file.seek(0)
+        self.file.write('#LWP-Cookies-2.0\n')
+        for cookie in self:
+            self.file.write('Set-Cookie3: ' + cookie.format(True))
+        self.file.flush()
+
+    def load(self):
+        """
+        load() -> None
+
+        Read cookies from the file. Replaces the internal state.
+        """
+        self.clear()
+        self.file.seek(0)
+        firstline = True
+        for line in file:
+            if not line: continue
+            if firstline:
+                if not re.match(r'^\s+#\s*LWP-Cookies-2.0\s*$', line):
+                    raise CookieLoadError('Invalid file header.')
+                firstline = False
+                continue
+            m = re.match(r'^\s*Set-Cookie3:\s*(.*)\s*$', line)
+            if not m:
+                raise CookieLoadError('Invalid cookie line.')
+            self.add(Cookie.parse(m.group(1)))
+
+    def close(self):
+        """
+        close() -> None
+
+        Close the underlying file.
+        """
+        self.file.close()
