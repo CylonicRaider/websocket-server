@@ -21,10 +21,10 @@ module for further convenience functions.
 
 __version__ = '1.0'
 
-# Auxillary modules
+# Auxiliary modules
 from . import compat, constants, exceptions, tools
 # Main modules
-from . import wsfile, server, client, quick, examples
+from . import cookies, wsfile, server, client, quick, examples
 
 __all__ = constants.__all__ + exceptions.__all__
 __all__ += ['WebSocketFile', 'wrap', 'WebSocketRequestHandler']
