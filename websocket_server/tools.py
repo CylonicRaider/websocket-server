@@ -132,7 +132,7 @@ def parse_rfc2616_date(s):
     if not m: raise ValueError('Bad date')
     # Interpret month name.
     try:
-        month = REVMONTHS[m.group('m').lower()]
+        month = REVMONTHS[m.group('b').lower()]
     except KeyError:
         raise ValueError('Bad date')
     # Assemble time struct.

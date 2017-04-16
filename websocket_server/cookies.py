@@ -59,7 +59,8 @@ def parse_url(url):
     convenient for Cookie.match() et al.
     """
     purl = urlparse(url)
-    return (purl.scheme.lower(), (purl.hostname or '').lower(), purl.path)
+    return (purl.scheme.lower(), (purl.hostname or '').lower(),
+            (purl.path or '/'))
 
 class CookieLoadError(Exception):
     """
@@ -101,9 +102,9 @@ class Cookie:
             k, s, v = token.partition('=')
             if not s: v = None
             if n == 0:
-                name, value = k, v
+                name, value = k.strip(), v.strip()
             else:
-                k, v = cls._parse_attr(k, v)
+                k, v = cls._parse_attr(k.strip(), v.strip())
                 attrs[k] = v
         return cls(name, value, **attrs)
 
@@ -198,7 +199,7 @@ class Cookie:
             self._attrs[key] = value
         self._update(lkey)
 
-    def __delitem__(self, key, value):
+    def __delitem__(self, key):
         """
         del self[key]
 
@@ -290,9 +291,9 @@ class Cookie:
         """
         ret = [self.name, '=', self.value]
         if attrs:
-            for k, v in self.items():
+            for k, v in self._attrs.items():
                 s = self._format_attr(k, v)
-                if s: ret.extend((';', s))
+                if s: ret.extend(('; ', s))
         return ''.join(ret)
 
     def _format_attr(self, key, value):
@@ -493,7 +494,7 @@ class CookieJar:
         up.
         """
         info = parse_url(url)
-        return filter(self, lambda c: c._matches(info) and c.is_fresh())
+        return filter(lambda c: c._matches(info) and c.is_fresh(), self)
 
 class FileCookieJar(CookieJar):
     """
@@ -517,7 +518,11 @@ class FileCookieJar(CookieJar):
         CookieJar.__init__(self)
         self._file = file
         if isinstance(file, (str, unicode)):
-            self.file = open(file, 'r+')
+            # HACK: r+ will fail if the file does not exist.
+            try:
+                self.file = open(file, 'r+')
+            except IOError:
+                self.file = open(file, 'w+')
         else:
             self.file = file
 
@@ -530,7 +535,7 @@ class FileCookieJar(CookieJar):
         self.file.seek(0)
         self.file.write('#LWP-Cookies-2.0\n')
         for cookie in self:
-            self.file.write('Set-Cookie3: ' + cookie.format(True))
+            self.file.write('Set-Cookie3: ' + cookie.format(True) + '\n')
         self.file.flush()
 
     def load(self):
@@ -542,10 +547,10 @@ class FileCookieJar(CookieJar):
         self.clear()
         self.file.seek(0)
         firstline = True
-        for line in file:
+        for line in self.file:
             if not line: continue
             if firstline:
-                if not re.match(r'^\s+#\s*LWP-Cookies-2.0\s*$', line):
+                if not re.match(r'^\s*#\s*LWP-Cookies-2.0\s*$', line):
                     raise CookieLoadError('Invalid file header.')
                 firstline = False
                 continue
