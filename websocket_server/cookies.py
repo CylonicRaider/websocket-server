@@ -516,20 +516,22 @@ class CookieJar:
 
 class FileCookieJar(CookieJar):
     """
-    FileCookieJar(file) -> new instance
+    FileCookieJar(file=None) -> new instance
 
-    A FileCookieJar extends CookieJar by implementing conveniently
-    saving cookies to files and restoring from them.
-    file is a either a file object or a filename. If it's an object,
+    FileCookieJar is an abstract extension of CookieJar providing methods
+    to save cookies to a file and to restore them from it.
+    file is a file object, or a filename, or None. If it is an object,
     it is expected to be opened in text mode, and should have a read(),
-    a write(), a flush(), a seek(), and a close() method.
-    The format used should be compatible to LWPCookieJar from the
-    standard library.
+    a write(), a flush(), a seek(), and a close() method. If None, the
+    jar is attached to no file, and only the stream-based serialization
+    methods can be used.
+    The class does not define a particular serialization format; this
+    is delegated to subclasses.
     """
 
-    def __init__(self, file):
+    def __init__(self, file=None):
         """
-        __init__(file) -> None
+        __init__(file=None) -> None
 
         See class docstring for details.
         """
@@ -548,13 +550,18 @@ class FileCookieJar(CookieJar):
         """
         save() -> None
 
-        Serialize the cookies into the file. Replaces the file.
+        Serialize the cookies into the configured file, replacing it.
         """
         self.file.seek(0)
-        self.file.write('#LWP-Cookies-2.0\n')
-        for cookie in self:
-            self.file.write('Set-Cookie3: ' + cookie.format(True) + '\n')
-        self.file.flush()
+        self.save_to(self.file)
+
+    def save_to(self, stream):
+        """
+        save_to(stream) -> None
+
+        Serialize the cookies into the given stream.
+        """
+        raise NotImplementedError
 
     def load(self):
         """
@@ -562,10 +569,54 @@ class FileCookieJar(CookieJar):
 
         Read cookies from the file. Replaces the internal state.
         """
-        self.clear()
         self.file.seek(0)
+        self.load_from(self.file)
+
+    def load_from(self, stream):
+        """
+        load_from(stream) -> None
+
+        Read cookies from the given stream, replacing internal state.
+        """
+        raise NotImplementedError
+
+    def close(self):
+        """
+        close() -> None
+
+        Close the underlying file.
+        """
+        self.file.close()
+
+class LWPCookieJar(FileCookieJar):
+    """
+    LWPCookieJar(filename=None) -> new instance
+
+    This class extends FileCookieJar with concrete (de)serialization
+    methods aiming to be compatible to the same-named class from the
+    standard library.
+    """
+
+    def save_to(self, stream):
+        """
+        save_to(stream) -> None
+
+        See FileCookieJar for details.
+        """
+        stream.write('#LWP-Cookies-2.0\n')
+        for cookie in self:
+            stream.write('Set-Cookie3: %s\n' % cookie.format(True))
+        stream.flush()
+
+    def load_from(self, stream):
+        """
+        load_from(stream) -> None
+
+        See FileCookieJar for details.
+        """
+        self.clear()
         firstline = True
-        for line in self.file:
+        for line in stream:
             if not line: continue
             if firstline:
                 if not re.match(r'^\s*#\s*LWP-Cookies-2.0\s*$', line):
@@ -576,11 +627,3 @@ class FileCookieJar(CookieJar):
             if not m:
                 raise CookieLoadError('Invalid cookie line.')
             self.add(Cookie.parse(m.group(1)))
-
-    def close(self):
-        """
-        close() -> None
-
-        Close the underlying file.
-        """
-        self.file.close()
