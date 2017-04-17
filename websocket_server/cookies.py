@@ -122,10 +122,12 @@ class Cookie:
         attributes.
         """
         lkey = key.lower()
+        if value.startswith('"') and value.endswith('"'):
+            value = value[1:-1].replace('\\"', '"').replace('\\\\', '\\')
         if not value:
             return (key, None)
         elif lkey == 'expires':
-            return (key, tools.parse_rfc2616_date(value))
+            return (key, tools.parse_http_date(value))
         elif lkey == 'path':
             return (key, unquote(value))
         elif lkey == 'max-age':
@@ -318,7 +320,7 @@ class Cookie:
         if value is None:
             return key
         elif lkey == 'expires':
-            return '%s=%s' % (key, tools.format_rfc2616_date(value))
+            return '%s=%s' % (key, tools.format_http_date(value))
         elif lkey == 'path':
             return '%s=%s' % (key, quote(value))
         else:

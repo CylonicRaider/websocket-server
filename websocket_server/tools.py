@@ -120,31 +120,42 @@ REVMONTHS = dict((v.lower(), k) for k, v in MONTHS.items())
 # Names of days of the week.
 WDAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
 
-def parse_rfc2616_date(s):
+# ISO 8601 datetiem format.
+ISO_DATETIME_RE = re.compile(r'(?P<Y>\d+) - (?P<m>\d+) - (?P<d>\d+) T? '
+    r'(?P<H>\d+) : (?P<M>\d+) : (?P<S>\d+) Z?'.replace(' ', r'\s*'))
+
+def parse_http_date(s):
     """
-    parse_rfc2616_date(s) -> int
+    parse_http_date(s) -> int
 
     Parse a timestamp as it occurs in HTTP and return the corresponding UNIX
     time.
     """
     # Since strptime() depends on the locale, we'll do the parsing ourself.
     m = DATETIME_RE.match(s.strip())
-    if not m: raise ValueError('Bad date')
-    # Interpret month name.
-    try:
-        month = REVMONTHS[m.group('b').lower()]
-    except KeyError:
-        raise ValueError('Bad date')
-    # Assemble time struct.
-    struct = (int(m.group('Y')), month, int(m.group('d')),
-              int(m.group('H')), int(m.group('M')), int(m.group('S')),
-              0, 0, 0)
+    if m:
+        # Interpret month name.
+        try:
+            month = REVMONTHS[m.group('b').lower()]
+        except KeyError:
+            raise ValueError('Bad date')
+        # Assemble time struct.
+        struct = (int(m.group('Y')), month, int(m.group('d')),
+                  int(m.group('H')), int(m.group('M')), int(m.group('S')),
+                  0, 0, 0)
+    else:
+        # ISO 8601, perhaps?
+        m = ISO_DATETIME_RE.match(s.strip())
+        if not m: raise ValueError('Bad date')
+        struct = (int(m.group('Y')), int(m.group('m')), int(m.group('d')),
+                  int(m.group('H')), int(m.group('M')), int(m.group('S')),
+                  0, 0, 0)
     # Return corresponding timestamp.
     return calendar.timegm(struct)
 
-def format_rfc2616_date(t):
+def format_http_date(t):
     """
-    format_rfc2616_date(t) -> str
+    format_http_date(t) -> str
 
     Return a string represententing the given UNIX timestamp suitable for
     inclusion into HTTP headers.
