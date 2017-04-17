@@ -606,15 +606,29 @@ class LWPCookieJar(FileCookieJar):
     standard library.
     """
 
+    # Canonicalize attribute case.
+    ATTR_CASE = {'secure': 'Secure', 'discard': 'Discard',
+        'version': 'Version', 'port': 'Port', 'path': 'Path',
+        'domain': 'Domain', 'expires': 'Expires', 'comment': 'Comment',
+        'commenturl': 'CommentURL'}
+
     def save_to(self, stream):
         """
         save_to(stream) -> None
 
         See FileCookieJar for details.
         """
+        def format_attr(key, value):
+            if key.lower() == 'expires':
+                return time.strftime('expires="%Y-%m-%d %H:%M:%S Z"',
+                                     time.gmtime(value))
+            elif key.lower() == 'max-age':
+                return None
+            else:
+                return cookie._format_attr(key, value)
         stream.write('#LWP-Cookies-2.0\n')
         for cookie in self:
-            stream.write('Set-Cookie3: %s\n' % cookie.format(True))
+            stream.write('Set-Cookie3: %s\n' % cookie.format(format_attr))
         stream.flush()
 
     def load_from(self, stream):
@@ -623,6 +637,9 @@ class LWPCookieJar(FileCookieJar):
 
         See FileCookieJar for details.
         """
+        def parse_attr(key, value):
+            key = self.ATTR_CASE.get(key, key)
+            return Cookie._parse_attr(key, value)
         self.clear()
         firstline = True
         for line in stream:
@@ -635,4 +652,4 @@ class LWPCookieJar(FileCookieJar):
             m = re.match(r'^\s*Set-Cookie3:\s*(.*)\s*$', line)
             if not m:
                 raise CookieLoadError('Invalid cookie line.')
-            self.add(Cookie.parse(m.group(1)))
+            self.add(Cookie.parse(m.group(1), parse_attr=parse_attr))
