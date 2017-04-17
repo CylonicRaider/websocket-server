@@ -89,14 +89,18 @@ class Cookie:
     """
 
     @classmethod
-    def parse(cls, string, url=None):
+    def parse(cls, string, url=None, parse_attr=None):
         """
-        parse(string, url=None) -> new instance
+        parse(string, url=None, parse_attr=None) -> new instance
 
         Parse the given textual cookie definition and return the
         equivalent object. url is the URL this cookie was received
         from.
+        parse_attr can be used to dependency-inject a custom attribute
+        parser; the _parse_attr method of the same class is used as
+        a default.
         """
+        if parse_attr is None: parse_attr = cls._parse_attr
         name, value, attrs = None, None, {}
         for n, token in enumerate(string.split(';')):
             k, s, v = token.partition('=')
@@ -104,7 +108,7 @@ class Cookie:
             if n == 0:
                 name, value = k.strip(), v.strip()
             else:
-                k, v = cls._parse_attr(k.strip(), v.strip())
+                k, v = parse_attr(k.strip(), v.strip())
                 attrs[k] = v
         return cls(name, value, **attrs)
 
@@ -113,7 +117,7 @@ class Cookie:
         """
         _parse_attr(key, value) -> (key, value)
 
-        Convert the given cookie attribute to an programmatically usable
+        Convert the given cookie attribute to a programmatically usable
         format. key is the name of the attribute (and always present); value
         is either the value as a string, or None if no value was given. Both
         key and value have surrounding whitespace removed.
@@ -297,12 +301,17 @@ class Cookie:
         as an HTTP header value. If attrs is false, only the name and
         value are formatted (making the output suitable for a
         client-side Cookie: header); if it is true, attributes are
-        included (rendering it suitable for a server-side Set-Cookie:).
+        included (rendering it suitable for a server-side Set-Cookie:);
+        if attrs is callable, it is invoked directly to format
+        individual attributes; see _format_attr() (which may be fallen
+        back to) for its usage.
         """
         ret = [self.name, '=', self.value]
         if attrs:
+            if not callable(attrs):
+                attrs = self._format_attr
             for k, v in self._attrs.items():
-                s = self._format_attr(k, v)
+                s = attrs(k, v)
                 if s: ret.extend(('; ', s))
         return ''.join(ret)
 
