@@ -111,9 +111,9 @@ class Cookie:
             k, s, v = token.partition('=')
             if not s: v = None
             if n == 0:
-                name, value = k.strip(), v.strip()
+                name, value = k.strip(), (v if v is None else v.strip())
             else:
-                k, v = parse_attr(k.strip(), v.strip())
+                k, v = parse_attr(k.strip(), v if v is None else v.strip())
                 attrs[k] = v
         url = make_url(url, attrs)
         return cls(name, value, url, **attrs)
@@ -132,7 +132,7 @@ class Cookie:
         attributes.
         """
         lkey = key.lower()
-        if value.startswith('"') and value.endswith('"'):
+        if value and value.startswith('"') and value.endswith('"'):
             value = value[1:-1].replace('\\"', '"').replace('\\\\', '\\')
         if not value:
             return (key, None)
