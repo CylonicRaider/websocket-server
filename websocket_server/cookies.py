@@ -690,8 +690,12 @@ class LWPCookieJar(FileCookieJar):
             # Restore the Domain and Path attributes.
             if 'domain_dot' not in lattrs:
                 del_attr('domain')
+            else:
+                del_attr('domain_dot')
             if 'path_spec' not in lattrs:
                 del_attr('path')
+            else:
+                del_attr('path_spec')
             return urlunsplit(parts)
         self.clear()
         firstline = True
