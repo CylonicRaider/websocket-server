@@ -14,10 +14,10 @@ from . import tools
 from .compat import bytes, unicode
 
 try:
-    from urllib.parse import quote, unquote, urlparse
+    from urllib.parse import quote, unquote, urlparse, urlunparse
 except ImportError:
     from urllib import quote, unquote
-    from urlparse import urlparse
+    from urlparse import urlparse, urlunparse
 
 __all__ = ['Cookie', 'CookieJar', 'FileCookieJar', 'CookieLoadError']
 
@@ -274,7 +274,7 @@ class Cookie:
                 self._domain_exact = True
             else:
                 domain = urlparse(self.url).hostname
-                self._domain = purl.hostname
+                self._domain = domain
                 self._domain_exact = True
         elif attr == 'path':
             if self.get('Path') and self['Path'].startswith('/'):
@@ -635,17 +635,37 @@ class LWPCookieJar(FileCookieJar):
 
         See FileCookieJar for details.
         """
+        def make_attrs(cookie):
+            def update_attr(name, value):
+                ret[retkeys.get(name.lower(), name)] = value
+            def del_attr(name):
+                name = name.lower()
+                if name in retkeys: del ret[retkeys[name]]
+            ret = dict(cookie)
+            retkeys = dict((k.lower(), k) for k in ret)
+            if cookie._domain_exact:
+                del_attr('domain_dot')
+            else:
+                update_attr('domain_dot', None)
+            if 'path' in retkeys:
+                update_attr('path_spec', None)
+            else:
+                del_attr('path_spec')
+            update_attr('Domain', cookie._domain)
+            update_attr('Path', cookie._path)
+            del_attr('Max-Age')
+            update_attr('Expires', cookie._expires)
+            return ret.items()
         def format_attr(key, value):
             if key.lower() == 'expires':
                 return time.strftime('expires="%Y-%m-%d %H:%M:%S Z"',
                                      time.gmtime(value))
-            elif key.lower() == 'max-age':
-                return None
             else:
                 return cookie._format_attr(key, value)
         stream.write('#LWP-Cookies-2.0\n')
         for cookie in self:
-            stream.write('Set-Cookie3: %s\n' % cookie.format(format_attr))
+            stream.write('Set-Cookie3: %s\n' % cookie._format(make_attrs,
+                                                              format_attr))
         stream.flush()
 
     def load_from(self, stream):
@@ -657,6 +677,22 @@ class LWPCookieJar(FileCookieJar):
         def parse_attr(key, value):
             key = self.ATTR_CASE.get(key, key)
             return Cookie._parse_attr(key, value)
+        def make_url(url, attrs):
+            def del_attr(k):
+                k = k.lower()
+                if k in lkeys: del attrs[lkeys[k]]
+            lkeys = dict((k.lower(), k) for k in attrs)
+            lattrs = dict((k.lower(), v) for k, v in attrs.items())
+            # Assemble URL.
+            parts = ['https' if 'secure' in lattrs else 'http',
+                     lattrs['domain'], lattrs['path'], '', '', '']
+            if 'port' in lattrs: parts[1] += ':%s' % lattrs['port']
+            # Restore the Domain and Path attributes.
+            if 'domain_dot' not in lattrs:
+                del_attr('domain')
+            if 'path_spec' not in lattrs:
+                del_attr('path')
+            return urlunparse(parts)
         self.clear()
         firstline = True
         for line in stream:
@@ -669,4 +705,5 @@ class LWPCookieJar(FileCookieJar):
             m = re.match(r'^\s*Set-Cookie3:\s*(.*)\s*$', line)
             if not m:
                 raise CookieLoadError('Invalid cookie line.')
-            self.add(Cookie.parse(m.group(1), parse_attr=parse_attr))
+            self.add(Cookie.parse(m.group(1), parse_attr=parse_attr,
+                                  make_url=make_url))
