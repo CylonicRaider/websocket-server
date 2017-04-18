@@ -170,7 +170,8 @@ class Cookie:
 
         Return a programmer-friendly string representation of self.
         """
-        return '<%s %s>' % (self.__class__.__name__, self.format())
+        return '<%s %s%s>' % (self.__class__.__name__, self.format(),
+            '; _url=' + self.url if self.url else '')
 
     def __len__(self):
         """
