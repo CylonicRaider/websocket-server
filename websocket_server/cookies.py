@@ -14,10 +14,10 @@ from . import tools
 from .compat import bytes, unicode
 
 try:
-    from urllib.parse import quote, unquote, urlparse, urlunparse
+    from urllib.parse import quote, unquote, urlsplit, urlunsplit
 except ImportError:
     from urllib import quote, unquote
-    from urlparse import urlparse, urlunparse
+    from urlparse import urlsplit, urlunsplit
 
 __all__ = ['Cookie', 'CookieJar', 'FileCookieJar', 'CookieLoadError']
 
@@ -58,7 +58,7 @@ def parse_url(url):
     Parse url and return the scheme, host, and path normalized as
     convenient for Cookie.match() et al.
     """
-    purl = urlparse(url)
+    purl = urlsplit(url)
     return (purl.scheme.lower(), (purl.hostname or '').lower(),
             (purl.path or '/'))
 
@@ -273,7 +273,7 @@ class Cookie:
                 self._domain = None
                 self._domain_exact = True
             else:
-                domain = urlparse(self.url).hostname
+                domain = urlsplit(self.url).hostname
                 self._domain = domain
                 self._domain_exact = True
         elif attr == 'path':
@@ -282,7 +282,7 @@ class Cookie:
             elif self.url is None:
                 self._path = None
             else:
-                path = urlparse(self.url).path
+                path = urlsplit(self.url).path
                 scnt = path.count('/')
                 if scnt <= 1:
                     path = '/'
@@ -685,14 +685,14 @@ class LWPCookieJar(FileCookieJar):
             lattrs = dict((k.lower(), v) for k, v in attrs.items())
             # Assemble URL.
             parts = ['https' if 'secure' in lattrs else 'http',
-                     lattrs['domain'], lattrs['path'], '', '', '']
+                     lattrs['domain'], lattrs['path'], '', '']
             if 'port' in lattrs: parts[1] += ':%s' % lattrs['port']
             # Restore the Domain and Path attributes.
             if 'domain_dot' not in lattrs:
                 del_attr('domain')
             if 'path_spec' not in lattrs:
                 del_attr('path')
-            return urlunparse(parts)
+            return urlunsplit(parts)
         self.clear()
         firstline = True
         for line in stream:
