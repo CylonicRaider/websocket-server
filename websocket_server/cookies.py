@@ -89,18 +89,23 @@ class Cookie:
     """
 
     @classmethod
-    def parse(cls, string, url=None, parse_attr=None):
+    def parse(cls, string, url=None, parse_attr=None, make_url=None):
         """
-        parse(string, url=None, parse_attr=None) -> new instance
+        parse(string, url=None, parse_attr=None, make_url=None)
+            -> new instance
 
         Parse the given textual cookie definition and return the
         equivalent object. url is the URL this cookie was received
         from.
         parse_attr can be used to dependency-inject a custom attribute
         parser; the _parse_attr method of the same class is used as
-        a default.
+        a default. make_url can similarly be used to construct a cookie
+        URL from the URL as passed and the attribute dictionary (and
+        also to modify the attributes in-place before they are passed
+        into the Cookie constructor).
         """
         if parse_attr is None: parse_attr = cls._parse_attr
+        if make_url is None: make_url = lambda u, a: u
         name, value, attrs = None, None, {}
         for n, token in enumerate(string.split(';')):
             k, s, v = token.partition('=')
@@ -110,7 +115,8 @@ class Cookie:
             else:
                 k, v = parse_attr(k.strip(), v.strip())
                 attrs[k] = v
-        return cls(name, value, **attrs)
+        url = make_url(url, attrs)
+        return cls(name, value, url, **attrs)
 
     @classmethod
     def _parse_attr(cls, key, value):
@@ -301,18 +307,29 @@ class Cookie:
         as an HTTP header value. If attrs is false, only the name and
         value are formatted (making the output suitable for a
         client-side Cookie: header); if it is true, attributes are
-        included (rendering it suitable for a server-side Set-Cookie:);
-        if attrs is callable, it is invoked directly to format
-        individual attributes; see _format_attr() (which may be fallen
-        back to) for its usage.
+        included (rendering it suitable for a server-side Set-Cookie:).
         """
+        make_attrs = None if attrs else lambda x: ()
+        return self._format(make_attrs)
+
+    def _format(self, make_attrs=None, format_attr=None):
+        """
+        _format(make_attrs=None, format_attr=None) -> str
+
+        Finely-tunable backend for format(). make_attrs is a function
+        mapping a single Cookie instance to an iterable of key-value
+        pairs representing the attributes, format_attr is a function
+        compatible with the _format_attr() method that serializes the
+        individual attributes. make_attrs defaults to a function that
+        shortcuts into the internal attribute storage to simulate
+        dict(self).items(); format_attr defaults to _format_attr().
+        """
+        if make_attrs is None: make_attrs = lambda x: self._attrs.items()
+        if format_attr is None: format_attr = self._format_attr
         ret = [self.name, '=', self.value]
-        if attrs:
-            if not callable(attrs):
-                attrs = self._format_attr
-            for k, v in self._attrs.items():
-                s = attrs(k, v)
-                if s: ret.extend(('; ', s))
+        for k, v in make_attrs(self):
+            s = format_attr(k, v)
+            if s: ret.extend(('; ', s))
         return ''.join(ret)
 
     def _format_attr(self, key, value):
