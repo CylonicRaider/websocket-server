@@ -333,19 +333,23 @@ class Cookie:
             if s: ret.extend(('; ', s))
         return ''.join(ret)
 
-    def _format_attr(self, key, value):
+    def _format_attr(self, key, value, force=False):
         """
-        _format_attr(key, value) -> str
+        _format_attr(key, value, force=False) -> str
 
         Return a proper textual representation of the given attribute.
         To suppress displaying the attribute altogether, return a false
         value (such as the empty string or None).
         The default implementation returns a bare name if value is
         None, and properly formats the Expires and Path attributes.
+        This implementation hides attributes containing an underscore;
+        set the force parameter to disable that.
         """
         lkey = key.lower()
         if value is None:
             return key
+        elif '_' in key and not force:
+            return None
         elif lkey == 'expires':
             return '%s=%s' % (key, tools.format_http_date(value))
         elif lkey == 'path':
@@ -662,7 +666,7 @@ class LWPCookieJar(FileCookieJar):
                 return time.strftime('expires="%Y-%m-%d %H:%M:%S Z"',
                                      time.gmtime(value))
             else:
-                return cookie._format_attr(key, value)
+                return cookie._format_attr(key, value, True)
         stream.write('#LWP-Cookies-2.0\n')
         for cookie in self:
             stream.write('Set-Cookie3: %s\n' % cookie._format(make_attrs,
