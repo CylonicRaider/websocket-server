@@ -304,17 +304,28 @@ class Cookie:
         if attr in ('domain', 'path'):
             self.key = (self._domain, self._path, self.name)
 
-    def format(self, attrs=True):
+    def format(self, mode='all'):
         """
-        format(attrs=True) -> str
+        format(mode='all') -> str
 
-        Return a textual representation of the cookie suitable for use
-        as an HTTP header value. If attrs is false, only the name and
-        value are formatted (making the output suitable for a
-        client-side Cookie: header); if it is true, attributes are
-        included (rendering it suitable for a server-side Set-Cookie:).
+        Return a textual representation of the cookie, suitable for
+        inclusion into a HTTP header, with details depending on mode:
+        'all'   : All cookie attributes are included.
+        'set'   : Attributes including underscores (meant for internal
+                  client-side use) are omitted; can be included in a
+                  Set-Cookie: header.
+        'return': No attributes are included at all; result can be
+                  included in a Cookie: header.
         """
-        make_attrs = None if attrs else lambda x: ()
+        if mode == 'all':
+            make_attrs = None
+        elif mode == 'set':
+            make_attrs = lambda x: ((k, v) for k, v in self.attrs.items()
+                                    if '_' not in k)
+        elif mode == 'return':
+            make_attrs = lambda: ()
+        else:
+            raise ValueError('Bad cookie formatting mode.')
         return self._format(make_attrs)
 
     def _format(self, make_attrs=None, format_attr=None):
@@ -337,23 +348,19 @@ class Cookie:
             if s: ret.extend(('; ', s))
         return ''.join(ret)
 
-    def _format_attr(self, key, value, force=False):
+    def _format_attr(self, key, value):
         """
-        _format_attr(key, value, force=False) -> str
+        _format_attr(key, value) -> str
 
         Return a proper textual representation of the given attribute.
         To suppress displaying the attribute altogether, return a false
         value (such as the empty string or None).
         The default implementation returns a bare name if value is
         None, and properly formats the Expires and Path attributes.
-        This implementation hides attributes containing an underscore;
-        set the force parameter to disable that.
         """
         lkey = key.lower()
         if value is None:
             return key
-        elif '_' in key and not force:
-            return None
         elif lkey == 'expires':
             return '%s=%s' % (key, tools.format_http_date(value))
         elif lkey == 'path':
@@ -664,7 +671,7 @@ class LWPCookieJar(FileCookieJar):
                 return time.strftime('expires="%Y-%m-%d %H:%M:%S Z"',
                                      time.gmtime(value))
             else:
-                return cookie._format_attr(key, value, True)
+                return cookie._format_attr(key, value)
         stream.write('#LWP-Cookies-2.0\n')
         for cookie in self:
             stream.write('Set-Cookie3: %s\n' % cookie._format(make_attrs,
