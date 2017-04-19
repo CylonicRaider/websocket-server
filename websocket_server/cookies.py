@@ -523,7 +523,11 @@ class CookieJar:
         if path is None:
             pmatch = lambda x: False
         else:
-            path = '/' if not path.startswith('/') else path.rstrip('/')
+            scnt = path.count('/')
+            if scnt <= 1:
+                path = '/'
+            else:
+                path = path[:path.rindex('/')]
             pmatch = lambda x: paths_match(path, x)
         self.filter(lambda c: not (dmatch(c.key[0]) and pmatch(c.key[1])))
 
