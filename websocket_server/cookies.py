@@ -14,10 +14,10 @@ from . import tools
 from .compat import bytes, unicode
 
 try:
-    from urllib.parse import quote, unquote, urlsplit, urlunsplit
+    from urllib.parse import quote, unquote, urlsplit, urlunsplit, parse_qs
 except ImportError:
     from urllib import quote, unquote
-    from urlparse import urlsplit, urlunsplit
+    from urlparse import urlsplit, urlunsplit, parse_qs
 
 __all__ = ['Cookie', 'CookieJar', 'FileCookieJar', 'CookieLoadError']
 
@@ -87,6 +87,27 @@ class Cookie:
     Make sure to choose only appropriate names/values; Cookie does not
     empoly any means of automatic escaping.
     """
+
+    @classmethod
+    def create(cls, name, value, url):
+        """
+        create(name, value, url) -> new instance
+
+        Create a cookie with the given name and value, initializing
+        attributes from the given URL. The host name from it is used
+        for the Domain attribute, the path for the Path, query string
+        parameters are converted into additional attributes.
+        """
+        purl = urlsplit(url)
+        attrs = {}
+        if purl.hostname: attrs['Domain'] = purl.hostname
+        attrs['Path'] = purl.path or '/'
+        for key, value in parse_qs(purl.query, True).items():
+            if value:
+                attrs[key] = value
+            else:
+                attrs[key] = None
+        return cls(name, value, url, **attrs)
 
     @classmethod
     def parse(cls, string, url=None, parse_attr=None, make_url=None):
