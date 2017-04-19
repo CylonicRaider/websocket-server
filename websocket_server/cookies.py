@@ -531,9 +531,9 @@ class CookieJar:
             pmatch = lambda x: paths_match(path, x)
         self.filter(lambda c: not (dmatch(c.key[0]) and pmatch(c.key[1])))
 
-    def cleanup(self, expired=True, session=True):
+    def cleanup(self, expired=True, session=False):
         """
-        cleanup(expired=True, session=True) -> None
+        cleanup(expired=True, session=False) -> None
 
         Remove expired and/or session cookies from the jar. Note that
         expiring and being a session cookie are mutually exclusive.
@@ -592,37 +592,48 @@ class FileCookieJar(CookieJar):
         else:
             self.file = file
 
-    def save(self):
+    def save(self, cleanup=True):
         """
-        save() -> None
+        save(cleanup=True) -> None
 
-        Serialize the cookies into the configured file, replacing it.
+        Serialize the cookies into the configured file, replacing its
+        contents. If cleanup is true, expired or session-only cookies
+        are omitted, otherwise not.
         """
+        def check(cookie):
+            f = cookie.is_fresh()
+            return (f and f is not Ellipsis)
         self.file.seek(0)
-        self.save_to(self.file)
+        self.save_to(self.file, (check if cleanup else None))
 
-    def save_to(self, stream):
+    def save_to(self, stream, predicate=None):
         """
-        save_to(stream) -> None
+        save_to(stream, predicate=None) -> None
 
-        Serialize the cookies into the given stream.
+        Serialize the cookies matching predicate (all if it is None)
+        into the given stream.
         """
         raise NotImplementedError
 
-    def load(self):
+    def load(self, replace=False):
         """
-        load() -> None
+        load(replace=False) -> None
 
-        Read cookies from the file. Replaces the internal state.
+        Read cookies from the file. If replace is true, the cookies
+        from the file replace the internally stored ones, otherwise,
+        they are merged, with the cookies from the file taking
+        precedence.
         """
         self.file.seek(0)
+        if replace: self.clear()
         self.load_from(self.file)
 
     def load_from(self, stream):
         """
         load_from(stream) -> None
 
-        Read cookies from the given stream, replacing internal state.
+        Read cookies from the given stream, merging with the internal
+        state (cookies from the stream take precedence).
         """
         raise NotImplementedError
 
@@ -649,9 +660,9 @@ class LWPCookieJar(FileCookieJar):
         'domain': 'Domain', 'expires': 'Expires', 'comment': 'Comment',
         'commenturl': 'CommentURL'}
 
-    def save_to(self, stream):
+    def save_to(self, stream, predicate=None):
         """
-        save_to(stream) -> None
+        save_to(stream, predicate=None) -> None
 
         See FileCookieJar for details.
         """
@@ -677,7 +688,7 @@ class LWPCookieJar(FileCookieJar):
             else:
                 return cookie._format_attr(key, value)
         stream.write('#LWP-Cookies-2.0\n')
-        for cookie in self:
+        for cookie in filter(predicate, self):
             stream.write('Set-Cookie3: %s\n' % cookie._format(make_attrs,
                                                               format_attr))
         stream.flush()
@@ -706,7 +717,6 @@ class LWPCookieJar(FileCookieJar):
             else:
                 attrs.pop('path_spec', None)
             return urlunsplit(parts)
-        self.clear()
         firstline = True
         for line in stream:
             if not line: continue
