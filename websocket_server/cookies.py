@@ -14,10 +14,10 @@ from . import tools
 from .compat import bytes, unicode
 
 try:
-    from urllib.parse import quote, unquote, urlsplit, urlunsplit, parse_qs
+    from urllib.parse import quote, unquote, urlsplit, urlunsplit, parse_qsl
 except ImportError:
     from urllib import quote, unquote
-    from urlparse import urlsplit, urlunsplit, parse_qs
+    from urlparse import urlsplit, urlunsplit, parse_qsl
 
 __all__ = ['Cookie', 'CookieJar', 'FileCookieJar', 'CookieLoadError']
 
@@ -103,11 +103,11 @@ class Cookie:
         if purl.scheme in SECURE_SCHEMES: attrs['Secure'] = None
         if purl.hostname: attrs['Domain'] = purl.hostname
         attrs['Path'] = purl.path or '/'
-        for key, value in parse_qs(purl.query, True).items():
-            if value:
-                attrs[key] = value
+        for k, v in parse_qsl(purl.query, True):
+            if v:
+                attrs[k] = v
             else:
-                attrs[key] = None
+                attrs[k] = None
         return cls(name, value, url, **attrs)
 
     @classmethod
@@ -527,34 +527,34 @@ class CookieJar:
             pmatch = lambda x: paths_match(path, x)
         self.filter(lambda c: not (dmatch(c.key[0]) and pmatch(c.key[1])))
 
-    def clear_expired(self):
+    def cleanup(self, expired=True, session=True):
         """
-        clear_expired() -> None
+        cleanup(expired=True, session=True) -> None
 
-        Remove all cookies that have expired.
+        Remove expired and/or session cookies from the jar. Note that
+        expiring and being a session cookie are mutually exclusive.
         """
-        self.filter(lambda c: c.is_fresh())
-
-    def clear_session(self):
-        """
-        clear_session() -> None
-
-        Remove all session-only cookies.
-        """
-        self.filter(lambda c: c.is_fresh() is not Ellipsis)
+        def check(cookie):
+            fresh = cookie.is_fresh()
+            if expired and not fresh: return False
+            if session and fresh is Ellipsis: return False
+            return True
+        self.filter(check)
 
     def query(self, url):
         """
-        query(url) -> iterable
+        query(url) -> list
 
-        Retrieve an iterable (i.e. whatever the builtin filter()
-        returns) of cookies that would be delivered to url.
+        Retrieve a list of cookies that would be delivered to url.
         Expired cookies are not returned, but not removed from the jar,
-        either; use clear_expired() and clear_session() for cleaning
-        up.
+        either; use cleanup() for that.
         """
         info = parse_url(url)
-        return filter(lambda c: c._matches(info) and c.is_fresh(), self)
+        ret = list(filter(lambda c: c._matches(info) and c.is_fresh(), self))
+        # We don't (reliably) record the creation time, so the path alone
+        # will do.
+        ret.sort(key=lambda c: c['Path'], reverse=True)
+        return ret
 
 class FileCookieJar(CookieJar):
     """
