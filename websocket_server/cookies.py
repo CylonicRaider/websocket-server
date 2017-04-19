@@ -100,6 +100,7 @@ class Cookie:
         """
         purl = urlsplit(url)
         attrs = {}
+        if purl.scheme in SECURE_SCHEMES: attrs['Secure'] = None
         if purl.hostname: attrs['Domain'] = purl.hostname
         attrs['Path'] = purl.path or '/'
         for key, value in parse_qs(purl.query, True).items():
