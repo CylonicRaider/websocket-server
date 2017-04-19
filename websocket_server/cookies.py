@@ -99,7 +99,7 @@ class Cookie:
         parameters are converted into additional attributes.
         """
         purl = urlsplit(url)
-        attrs = {}
+        attrs = tools.CaseDict()
         if purl.scheme in SECURE_SCHEMES: attrs['Secure'] = None
         if purl.hostname: attrs['Domain'] = purl.hostname
         attrs['Path'] = purl.path or '/'
@@ -122,13 +122,13 @@ class Cookie:
         parse_attr can be used to dependency-inject a custom attribute
         parser; the _parse_attr method of the same class is used as
         a default. make_url can similarly be used to construct a cookie
-        URL from the URL as passed and the attribute dictionary (and
+        URL from the URL as passed and the attribute CaseDict (and
         also to modify the attributes in-place before they are passed
         into the Cookie constructor).
         """
         if parse_attr is None: parse_attr = cls._parse_attr
         if make_url is None: make_url = lambda u, a: u
-        name, value, attrs = None, None, {}
+        name, value, attrs = None, None, tools.CaseDict()
         for n, token in enumerate(string.split(';')):
             k, s, v = token.partition('=')
             if not s: v = None
@@ -177,8 +177,7 @@ class Cookie:
         self.value = value
         self.url = url
         self.key = None
-        self._attrs = attrs
-        self._keys = dict((k.lower(), k) for k in attrs.keys())
+        self.attrs = tools.CaseDict(attrs)
         self._domain = None
         self._domain_exact = False
         self._path = None
@@ -201,7 +200,7 @@ class Cookie:
 
         Return the amount of cookie attributes in self.
         """
-        return len(self._attrs)
+        return len(self.attrs)
 
     def __iter__(self):
         """
@@ -210,7 +209,7 @@ class Cookie:
         Return an iterator over the names of the cookie attributes in
         self.
         """
-        return iter(self._attrs)
+        return iter(self.attrs)
 
     def __contains__(self, key):
         """
@@ -218,7 +217,7 @@ class Cookie:
 
         Return whether a cookie attribute with the given name exists.
         """
-        return key.lower() in self._keys
+        return (key in self.attrs)
 
     def __getitem__(self, key):
         """
@@ -226,7 +225,7 @@ class Cookie:
 
         Retrieve the cookie attribute corresponding to key.
         """
-        return self._attrs[self._keys[key.lower()]]
+        return self.attrs[key]
 
     def __setitem__(self, key, value):
         """
@@ -234,13 +233,8 @@ class Cookie:
 
         Set the cookie attribute corresponding to key to value.
         """
-        lkey = key.lower()
-        try:
-            self._attrs[self._keys[lkey]] = value
-        except KeyError:
-            self._keys[lkey] = key
-            self._attrs[key] = value
-        self._update(lkey)
+        self.attrs[key] = value
+        self._update(key.lower())
 
     def __delitem__(self, key):
         """
@@ -248,9 +242,7 @@ class Cookie:
 
         Remove the given cookie attribute.
         """
-        lkey = key.lower()
-        del self._attrs[self._keys[lkey]]
-        del self._keys[lkey]
+        del self.attrs[key]
 
     def keys(self):
         """
@@ -260,19 +252,7 @@ class Cookie:
         names) as a sequence. Depending on the Python version, it is a
         list or a dynamic view object; be careful.
         """
-        return self._attrs.keys()
-
-    def get(self, attr, default=None):
-        """
-        get(key, default=None) -> object
-
-        Try to get the value of the given key, or default to default
-        (which, in turn, defaults to None).
-        """
-        try:
-            return self[attr]
-        except KeyError:
-            return default
+        return self.attrs.keys()
 
     def _update(self, attr):
         """
@@ -289,8 +269,9 @@ class Cookie:
             return
         attr = attr.lower()
         if attr == 'domain':
-            if self.get('Domain'):
-                self._domain = self['Domain'].lower().lstrip('.')
+            value = self.attrs.get('Domain')
+            if value:
+                self._domain = value.lower().lstrip('.')
                 self._domain_exact = False
             elif self.url is None:
                 self._domain = None
@@ -300,8 +281,9 @@ class Cookie:
                 self._domain = domain
                 self._domain_exact = True
         elif attr == 'path':
-            if self.get('Path') and self['Path'].startswith('/'):
-                self._path = self['Path']
+            value = self.attrs.get('Path')
+            if value and value.startswith('/'):
+                self._path = value
             elif self.url is None:
                 self._path = None
             else:
@@ -313,9 +295,9 @@ class Cookie:
                     path = path[:path.rindex('/')]
                 self._path = path
         elif attr in ('expires', 'max-age'):
-            if self.get('Max-Age'):
+            if self.attrs.get('Max-Age'):
                 self._expires = self._created + self['Max-Age']
-            elif self.get('Expires'):
+            elif self.attrs.get('Expires'):
                 self._expires = self['Expires']
             else:
                 self._expires = None
@@ -344,10 +326,10 @@ class Cookie:
         pairs representing the attributes, format_attr is a function
         compatible with the _format_attr() method that serializes the
         individual attributes. make_attrs defaults to a function that
-        shortcuts into the internal attribute storage to simulate
-        dict(self).items(); format_attr defaults to _format_attr().
+        returns self.attrs.items(); format_attr defaults to
+        _format_attr().
         """
-        if make_attrs is None: make_attrs = lambda x: self._attrs.items()
+        if make_attrs is None: make_attrs = lambda x: self.attrs.items()
         if format_attr is None: format_attr = self._format_attr
         ret = [self.name, '=', self.value]
         for k, v in make_attrs(self):
@@ -663,25 +645,19 @@ class LWPCookieJar(FileCookieJar):
         See FileCookieJar for details.
         """
         def make_attrs(cookie):
-            def update_attr(name, value):
-                ret[retkeys.get(name.lower(), name)] = value
-            def del_attr(name):
-                name = name.lower()
-                if name in retkeys: del ret[retkeys[name]]
-            ret = dict(cookie)
-            retkeys = dict((k.lower(), k) for k in ret)
+            ret = tools.CaseDict(cookie)
             if cookie._domain_exact:
-                del_attr('domain_dot')
+                ret.pop('domain_dot', None)
             else:
-                update_attr('domain_dot', None)
-            if 'path' in retkeys:
-                update_attr('path_spec', None)
+                ret['domain_dot'] = None
+            if 'path' in ret:
+                ret['path_spec'] = None
             else:
-                del_attr('path_spec')
-            update_attr('Domain', cookie._domain)
-            update_attr('Path', cookie._path)
-            del_attr('Max-Age')
-            update_attr('Expires', cookie._expires)
+                ret.pop('path_spec', None)
+            ret['Domain'] = cookie._domain
+            ret['Path'] = cookie._path
+            ret.pop('Max-Age', None)
+            ret['Expires'] = cookie._expires
             return ret.items()
         def format_attr(key, value):
             if key.lower() == 'expires':
@@ -705,24 +681,19 @@ class LWPCookieJar(FileCookieJar):
             key = self.ATTR_CASE.get(key, key)
             return Cookie._parse_attr(key, value)
         def make_url(url, attrs):
-            def del_attr(k):
-                k = k.lower()
-                if k in lkeys: del attrs[lkeys[k]]
-            lkeys = dict((k.lower(), k) for k in attrs)
-            lattrs = dict((k.lower(), v) for k, v in attrs.items())
             # Assemble URL.
-            parts = ['https' if 'secure' in lattrs else 'http',
-                     lattrs['domain'], lattrs['path'], '', '']
-            if 'port' in lattrs: parts[1] += ':%s' % lattrs['port']
+            parts = ['https' if 'Secure' in attrs else 'http',
+                     attrs['Domain'], attrs['Path'], '', '']
+            if 'Port' in attrs: parts[1] += ':%s' % attrs['Port']
             # Restore the Domain and Path attributes.
-            if 'domain_dot' not in lattrs:
-                del_attr('domain')
+            if 'domain_dot' not in attrs:
+                del attrs['Domain']
             else:
-                del_attr('domain_dot')
-            if 'path_spec' not in lattrs:
-                del_attr('path')
+                attrs.pop('domain_dot', None)
+            if 'path_spec' not in attrs:
+                del attrs['Path']
             else:
-                del_attr('path_spec')
+                attrs.pop('path_spec', None)
             return urlunsplit(parts)
         self.clear()
         firstline = True

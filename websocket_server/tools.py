@@ -9,6 +9,7 @@ import os
 import re
 import time
 import calendar
+import collections
 
 from .compat import bytearray, xrange
 
@@ -164,3 +165,80 @@ def format_http_date(t):
     ret = time.strftime('#a, %d #b %Y %H:%M:%S GMT', struct)
     return ret.replace('#a', WDAYS[struct[6]]).replace('#b',
                                                        MONTHS[struct[1]])
+
+class CaseDict(collections.MutableMapping):
+    """
+    CaseDict(source=(), **update) -> new instance
+
+    A mapping with case-insensitive (string) keys (the name is
+    abbreviated from CaseInsensitiveDict). See the dict constructor for
+    the meanings of the arguments.
+    """
+
+    def __init__(_self, _source=(), **_update):
+        """
+        __init__(source=(), **update) -> None
+
+        See class docstring for details.
+        """
+        super(CaseDict, _self).__init__()
+        _self._data = dict(_source, **_update)
+        _self._keys = dict((k.lower(), k) for k in _self._data)
+
+    def __repr__(self):
+        """
+        repr(self) -> str
+
+        Return a programmer-friendly string representation of self.
+        """
+        return '%s(%r)' % (self.__class__.__name__, self._data)
+
+    def __iter__(self):
+        """
+        iter(self) -> iter
+
+        Return an iterator over self.
+        """
+        return iter(self._data)
+
+    def __len__(self):
+        """
+        len(self) -> int
+
+        Return the length of self.
+        """
+        return len(self._data)
+
+    def __contains__(self, key):
+        """
+        key in self -> bool
+
+        Check whether the given key is contained in self.
+        """
+        return (key.lower() in self._keys)
+
+    def __getitem__(self, key):
+        """
+        self[key] -> value
+
+        Return the value associated with the given key.
+        """
+        return self._data[self._keys[key.lower()]]
+
+    def __setitem__(self, key, value):
+        """
+        self[key] = value
+
+        Assign the given value to the given key.
+        """
+        self._data[self._keys.setdefault(key.lower(), key)] = value
+
+    def __delitem__(self, key):
+        """
+        del self[key]
+
+        Remove the given key from self.
+        """
+        lower_key = key.lower()
+        del self._data[self._keys[lower_key]]
+        del self._keys[lower_key]
