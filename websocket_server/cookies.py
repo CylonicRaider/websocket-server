@@ -347,7 +347,7 @@ class Cookie:
             make_attrs = lambda x: ((k, v) for k, v in self.attrs.items()
                                     if '_' not in k)
         elif mode == 'return':
-            make_attrs = lambda: ()
+            make_attrs = lambda x: ()
         else:
             raise ValueError('Bad cookie formatting mode.')
         return self._format(make_attrs)

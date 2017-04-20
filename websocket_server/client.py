@@ -134,7 +134,7 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
             if cookies is not None:
                 # Could not find a cross-version way to select all headers
                 # with a given name.
-                setcookies = [v for k, v in resp.msg.getheaders()
+                setcookies = [v for k, v in resp.getheaders()
                               if k.lower() == 'set-cookie']
                 for value in setcookies:
                     cookies.process_set_cookie(url, value)
@@ -145,7 +145,7 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
                                  httplib.SEE_OTHER,
                                  httplib.TEMPORARY_REDIRECT):
                 # Redirection.
-                loc = resp.msg.get('Location')
+                loc = resp.getheader('Location')
                 if not loc:
                     raise httplib.HTTPException('Missing redirection '
                         'location')
@@ -158,7 +158,7 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
                     conn = None
             elif resp.status == httplib.UNAUTHORIZED:
                 # Basic HTTP authentication.
-                auth = resp.msg.get('WWW-Authenticate')
+                auth = resp.getheader('WWW-Authenticate')
                 if auth and not auth.startswith('Basic'):
                     raise httplib.HTTPException('Cannot authenticate')
                 creds = (purl.username + ':' + purl.password).encode('utf-8')
@@ -168,11 +168,11 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
                 raise httplib.HTTPException('Cannot handle status code %r' %
                                             resp.status)
         # Verify key and other fields.
-        if resp.msg.get('Sec-WebSocket-Accept') != process_key(key):
+        if resp.getheader('Sec-WebSocket-Accept') != process_key(key):
             raise ProtocolError('Invalid reply key')
-        if resp.msg.get('Sec-WebSocket-Extensions'):
+        if resp.getheader('Sec-WebSocket-Extensions'):
             raise ProtocolError('Extensions not supported')
-        p = resp.msg.get('Sec-WebSocket-Protocol')
+        p = resp.getheader('Sec-WebSocket-Protocol')
         if p and (not protos or p not in protos):
             raise ProtocolError('Invalid subprotocol received')
         # Construct return value.
