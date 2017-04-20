@@ -20,7 +20,7 @@ except ImportError:
     from urlparse import urlsplit, urlunsplit, parse_qsl
 
 __all__ = ['Cookie', 'CookieJar', 'FileCookieJar', 'LWPCookieJar',
-           'CookieLoadError']
+           'CookieLoadError', 'format_cookie', 'parse_set_cookie']
 
 SECURE_SCHEMES = ['https', 'wss']
 HTTP_SCHEMES = ['http', 'https', 'ws', 'wss']
@@ -62,6 +62,29 @@ def parse_url(url):
     purl = urlsplit(url)
     return (purl.scheme.lower(), (purl.hostname or '').lower(),
             (purl.path or '/'))
+
+def parse_cookie(string):
+    """
+    parse_cookie(string) -> dict
+
+    Parse the given Cookie: header value and return a mapping of cookie
+    names to values.
+    """
+    ret = {}
+    for el in string.split(';'):
+        n, s, v = el.partition('=')
+        ret[n.strip()] = v.strip()
+    return ret
+
+def format_set_cookie(cookie):
+    """
+    format_set_cookie(cookie) -> str
+
+    Format the given cookie suitable for a Set-Cookie: header value.
+    A convenience wrapper around cookie.format('set') included for
+    symmetry to parse_cookie().
+    """
+    return cookie.format('set')
 
 class CookieLoadError(Exception):
     """
@@ -475,9 +498,9 @@ class CookieJar:
         """
         return iter(self.cookies.values())
 
-    def add(self, cookie, validate=True):
+    def add(self, cookie, validate=False):
         """
-        add(cookie, validate=True) -> bool
+        add(cookie, validate=False) -> bool
 
         Add the given cookie to self, possibly replacing another one.
         If validate is true, the cookie is validated, i.e., the
@@ -594,6 +617,28 @@ class CookieJar:
         # will do.
         ret.sort(key=lambda c: c['Path'], reverse=True)
         return ret
+
+    def format_cookie(self, url):
+        """
+        format_cookie(url) -> str or None
+
+        Format a ready-to-use Cookie: header value for sending in a
+        request to url, or None if there are no cookies for it.
+        """
+        cookies = self.query(url)
+        if not cookies: return None
+        return '; '.join(c.format('return') for c in cookies)
+
+    def process_set_cookie(self, url, string):
+        """
+        process_set_cookie(url, string) -> None
+
+        Parse the given Set-Cookie: header value and update the cookie
+        jar as necessary.
+        url is the URL the response to whose request the cookie was
+        received from; string is the actual Set-Cookie header value.
+        """
+        self.add(Cookie.parse(string, url), True)
 
 class FileCookieJar(CookieJar):
     """
