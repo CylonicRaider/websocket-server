@@ -368,13 +368,15 @@ class Cookie:
         else:
             return '%s=%s' % (key, value)
 
-    def _matches(self, info):
+    def _matches(self, info, path=True):
         """
-        _matches(info) -> bool
+        _matches(info, path=True) -> bool
 
         Test whether this cookie would be delivered to the location
         described by info, which is a (scheme, host, path) tuple as
         returned by parse_url().
+        If path is false, the path is assumed to always match (as
+        needed for valid()).
         """
         if None in (self._domain, self._path): return False
         # Test scheme.
@@ -382,12 +384,13 @@ class Cookie:
             return False
         elif 'HttpOnly' in self and info[0] not in HTTP_SCHEMES:
             return False
-        # Test host.
+        # Test domain.
         if self._domain_exact:
             if info[1] != self._domain: return False
         else:
             if not domains_match(self._domain, info[1]): return False
         # Test path.
+        if not path: return True
         return paths_match(self._path, info[2])
 
     def matches(self, url):
@@ -396,7 +399,16 @@ class Cookie:
 
         Test whether this cookie would be delivered to url.
         """
-        return self._matches(parse_url(url))
+        return self._matches(parse_url(url), reverse)
+
+    def valid(self):
+        """
+        valid() -> bool
+
+        Check the attributes of the cookie for consistency with its URL
+        (if any).
+        """
+        return (not self.url or self._matches(parse_url(self.url), False))
 
     def is_fresh(self):
         """
@@ -462,13 +474,35 @@ class CookieJar:
         """
         return iter(self.cookies.values())
 
-    def add(self, cookie):
+    def add(self, cookie, validate=True):
         """
-        add(cookie) -> None
+        add(cookie, validate=True) -> bool
 
         Add the given cookie to self, possibly replacing another one.
+        If validate is true, the cookie is validated, i.e., the
+        addition is rejected unless the cookie's valid() method returns
+        True, and the cookie does not originate from a "non-HTTP" API
+        or there exists no former cookie with the HttpOnly attribute
+        set (RFC 6265, Section 5.3).
+        The "origination from a non-HTTP API" is determined by
+        inspecting the url attribute of the cookie; use the
+        Cookie.create() class method to craft a cookie that passes the
+        validation.
         """
+        if validate:
+            if not cookie.valid(): return False
+            try:
+                old = self.cookies[cookie.key]
+                # Force a KeyError unless the attribute is present.
+                old['HttpOnly']
+            except KeyError:
+                pass
+            else:
+                if cookie.url is None: return False
+                purl = urlsplit(cookie.url)
+                if purl.scheme not in HTTP_SCHEMES: return False
         self.cookies[cookie.key] = cookie
+        return True
 
     def remove(self, cookie):
         """
