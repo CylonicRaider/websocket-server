@@ -19,7 +19,8 @@ except ImportError:
     from urllib import quote, unquote
     from urlparse import urlsplit, urlunsplit, parse_qsl
 
-__all__ = ['Cookie', 'CookieJar', 'FileCookieJar', 'CookieLoadError']
+__all__ = ['Cookie', 'CookieJar', 'FileCookieJar', 'LWPCookieJar',
+           'CookieLoadError']
 
 SECURE_SCHEMES = ['https', 'wss']
 HTTP_SCHEMES = ['http', 'https', 'ws', 'wss']
