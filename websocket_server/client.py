@@ -40,20 +40,28 @@ class TweakHTTPResponse(httplib.HTTPResponse):
             self.length = None
             self.will_close = True
 
-def connect(url, protos=None, headers=None, **config):
+def connect(url, protos=None, headers=None, cookies=None, **config):
     """
-    connect(url, protos=None, headers=None, **config) -> WebSocketFile
+    connect(url, protos=None, headers=None, cookies=None, **config)
+        -> WebSocketFile
 
     Connect to the given URL, which is parsed to obtain all necessary
     information. Depending on the scheme (ws or wss), a HTTPConnection or
-    a HTTPSConnection is used internally; protos (a list of strings, a
-    string, or None) can be used to specify subprotocols; keyword
-    arguments can be passed the underlying connection constructor via
-    config; headers can be None or a mapping of additional request headers
-    to be added (note that it is expected to implement the mutable mapping
+    a HTTPSConnection is used internally. If the URL contains username or
+    password fields, those will be sent as a Basic HTTP authentication
+    header.
+    protos (a list of strings, a string, or None) can be used to specify
+    subprotocols.
+    headers can be None or a mapping of additional request headers to be
+    added (note that it is expected to implement the mutable mapping
     protocol and will be modified).
-    If the URL contains username or password fields, those will be sent as
-    a Basic HTTP authentication header.
+    cookies can be a CookieJar instance from the websocket_server.cookies
+    module, or anything that has compatible process_set_cookie() and
+    format_cookie() methods; the latters are used to submit cookies with
+    requests and to interpret the cookies returned with those. If cookies
+    is omitted or None, cookies are not processed at all.
+    Keyword arguments can be passed the underlying connection constructor
+    via config.
     The HTTP connection and response are stored in instance attributes of
     the return value, as "request" and "response", respectively; the
     socket of the connection is available as "_socket".
@@ -78,17 +86,17 @@ def connect(url, protos=None, headers=None, **config):
                 raise httplib.HTTPException('Redirect loop')
             connect_count -= 1
             # Split URL.
-            res = urlsplit(url)
+            purl = urlsplit(url)
             # Create connection.
             if conn:
                 pass
-            elif res.scheme == 'ws':
-                conn = httplib.HTTPConnection(res.hostname, res.port,
+            elif purl.scheme == 'ws':
+                conn = httplib.HTTPConnection(purl.hostname, purl.port,
                                               **config)
                 conn.response_class = TweakHTTPResponse
                 conn.connect()
-            elif res.scheme == 'wss':
-                conn = httplib.HTTPSConnection(res.hostname, res.port,
+            elif purl.scheme == 'wss':
+                conn = httplib.HTTPSConnection(purl.hostname, purl.port,
                                                **config)
                 conn.response_class = TweakHTTPResponse
                 conn.connect()
@@ -102,17 +110,34 @@ def connect(url, protos=None, headers=None, **config):
             # Construct key.
             key = base64.b64encode(os.urandom(16)).decode('ascii')
             headers['Sec-WebSocket-Key'] = key
+            # Cookies.
+            if cookies is not None:
+                v = cookies.format_cookie(url)
+                if v: headers['Cookie'] = v
             # Send request.
-            path = urlunsplit(('', '', res.path, res.query, ''))
+            path = urlunsplit(('', '', purl.path, purl.query, ''))
             conn.putrequest('GET', path)
             for n, v in headers.items():
                 conn.putheader(n, v)
             conn.endheaders()
+            # Clean up old file, if any.
+            try:
+                wrfile.close()
+            except:
+                pass
             # Grab socket reference; keep it alive for us.
             sock = conn.sock
             wrfile = sock.makefile('wb')
             # Obtain response.
             resp = conn.getresponse()
+            # Cookies encore.
+            if cookies is not None:
+                # Could not find a cross-version way to select all headers
+                # with a given name.
+                setcookies = [v for k, v in resp.msg.getheaders()
+                              if k.lower() == 'set-cookie']
+                for value in setcookies:
+                    cookies.process_set_cookie(url, value)
             # Handle replies.
             if resp.status == httplib.SWITCHING_PROTOCOLS:
                 break
@@ -128,7 +153,7 @@ def connect(url, protos=None, headers=None, **config):
                 url = urljoin(url, loc)
                 # Will possibly have to connect somewhere else.
                 nres = urlsplit(url)
-                if nres.hostname != res.hostname or nres.port != res.port:
+                if nres.hostname != purl.hostname or nres.port != purl.port:
                     conn.close()
                     conn = None
             elif resp.status == httplib.UNAUTHORIZED:
@@ -136,7 +161,7 @@ def connect(url, protos=None, headers=None, **config):
                 auth = resp.msg.get('WWW-Authenticate')
                 if auth and not auth.startswith('Basic'):
                     raise httplib.HTTPException('Cannot authenticate')
-                creds = (res.username + ':' + res.password).encode('utf-8')
+                creds = (purl.username + ':' + purl.password).encode('utf-8')
                 auth = 'Basic ' + base64.b64encode(creds).decode('ascii')
                 headers['Authorization'] = auth
             else:
