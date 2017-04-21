@@ -685,6 +685,7 @@ class FileCookieJar(CookieJar):
             return (f and f is not Ellipsis)
         self.file.seek(0)
         self.save_to(self.file, (check if cleanup else None))
+        self.file.truncate()
 
     def save_to(self, stream, predicate=None):
         """
