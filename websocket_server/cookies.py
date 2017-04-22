@@ -57,7 +57,7 @@ def parse_url(url):
     parse_url(url) -> (str, str, str)
 
     Parse url and return the scheme, host, and path normalized as
-    convenient for Cookie.match() et al.
+    convenient for Cookie.matches() et al.
     """
     purl = urlsplit(url)
     return (purl.scheme.lower(), (purl.hostname or '').lower(),
