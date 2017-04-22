@@ -423,7 +423,7 @@ class Cookie:
 
         Test whether this cookie would be delivered to url.
         """
-        return self._matches(parse_url(url), reverse)
+        return self._matches(parse_url(url))
 
     def valid(self):
         """
