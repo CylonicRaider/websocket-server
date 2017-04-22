@@ -202,6 +202,7 @@ class Cookie:
         self.url = url
         self.key = None
         self.attrs = tools.CaseDict(attrs)
+        self.relaxed = False
         self._domain = None
         self._domain_exact = False
         self._path = None
@@ -404,10 +405,11 @@ class Cookie:
         """
         if None in (self._domain, self._path): return False
         # Test scheme.
-        if 'Secure' in self and info[0] not in SECURE_SCHEMES:
-            return False
-        elif 'HttpOnly' in self and info[0] not in HTTP_SCHEMES:
-            return False
+        if not self.relaxed:
+            if 'Secure' in self and info[0] not in SECURE_SCHEMES:
+                return False
+            elif 'HttpOnly' in self and info[0] not in HTTP_SCHEMES:
+                return False
         # Test domain.
         if self._domain_exact:
             if info[1] != self._domain: return False
@@ -465,6 +467,7 @@ class CookieJar:
         See the class docstring for details.
         """
         self.cookies = {}
+        self.relaxed = False
 
     def __repr__(self):
         """
@@ -513,6 +516,7 @@ class CookieJar:
         Cookie.create() class method to craft a cookie that passes the
         validation.
         """
+        if self.relaxed: cookie.relaxed = True
         if validate:
             if not cookie.valid(): return False
             try:
