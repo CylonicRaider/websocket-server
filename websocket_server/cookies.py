@@ -8,6 +8,7 @@ Cookie management utilities.
 standard library are, frankly, utterly insufficient.
 """
 
+import os
 import re
 import time
 from . import tools
@@ -646,33 +647,42 @@ class CookieJar:
 
 class FileCookieJar(CookieJar):
     """
-    FileCookieJar(file=None) -> new instance
+    FileCookieJar(file=None, mode=None) -> new instance
 
-    FileCookieJar is an abstract extension of CookieJar providing methods
-    to save cookies to a file and to restore them from it.
+    FileCookieJar is an abstract extension of CookieJar providing
+    methods to save cookies to a file and to restore them from it.
     file is a file object, or a filename, or None. If it is an object,
     it is expected to be opened in text mode, and should have a read(),
     a write(), a flush(), a seek(), and a close() method. If None, the
     jar is attached to no file, and only the stream-based serialization
     methods can be used.
+    If mode is not None, it is a numerical file mode as used by
+    os.chmod(), and the cookie file's access mode is changed to it
+    after creating it (*not* when an already-existing file is opened).
     The class does not define a particular serialization format; this
     is delegated to subclasses.
     """
 
-    def __init__(self, file=None):
+    def __init__(self, file=None, mode=None):
         """
-        __init__(file=None) -> None
+        __init__(file=None, mode=None) -> None
 
         See class docstring for details.
         """
         CookieJar.__init__(self)
         self._file = file
+        self._mode = mode
         if isinstance(file, (str, unicode)):
             # HACK: r+ will fail if the file does not exist.
             try:
                 self.file = open(file, 'r+')
             except IOError:
                 self.file = open(file, 'w+')
+                # HACK: fchmod() is less racy, and less widely available.
+                try:
+                    os.fchmod(self.file.fileno(), mode)
+                except NameError:
+                    os.chmod(file, mode)
         else:
             self.file = file
 
