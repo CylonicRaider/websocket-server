@@ -177,7 +177,7 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
             raise ProtocolError('Invalid subprotocol received')
         # Construct return value.
         # NOTE: Have to read from resp itself, as it might have buffered the
-        #       beginning of the server's data, as that might have been
+        #       beginning of the server's data, as those might have been
         #       coalesced with the headers.
         ret = wrap(resp, wrfile)
         ret._socket = sock

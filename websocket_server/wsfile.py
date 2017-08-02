@@ -77,7 +77,7 @@ class WebSocketFile(object):
                    (which also include close*()) with _wrlock asserted,
                    and don't use those locks unless necessary. Make your
                    own.
-    _socket      : Underlying socket (set from_socket()).
+    _socket      : Underlying socket (set by from_socket()).
                    May not be present at all (i.e. be None). Only use this
                    if you are really sure you need to.
 
