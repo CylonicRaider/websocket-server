@@ -77,8 +77,7 @@ class WebSocketFile(object):
                    (which also include close*()) with _wrlock asserted,
                    and don't use those locks unless necessary. Make your
                    own.
-    _socket      : Underlying socket (set by the client and server
-                   modules).
+    _socket      : Underlying socket (set from_socket()).
                    May not be present at all (i.e. be None). Only use this
                    if you are really sure you need to.
 
@@ -121,9 +120,11 @@ class WebSocketFile(object):
         from_socket(cls, socket, server_side=False) -> WebSocketFile
 
         Wrap a socket in a WebSocketFile. Uses the makefile() method to
-        obtain the file objects internall used.
+        obtain the file objects internally used.
         """
-        return cls.from_file(socket.makefile('rwb'), server_side)
+        ret = cls.from_file(socket.makefile('rwb'), server_side)
+        ret._socket = socket
+        return ret
 
     @classmethod
     def from_file(cls, file, server_side=False):
@@ -671,7 +672,10 @@ def wrap(*args, **kwds):
     wrap(file1[, file2], **kwds) -> WebSocket
 
     Try to wrap file1 and (if given) file2 into a WebSocket.
-    Convenience method for static factory methods.
+    Convenience method for static factory methods: If both file1 and file2 are
+    given, they are passed to from_files(); if otherwise file1 has recv and
+    send attributes, it is passed to from_socket(), otherwise, it is passed to
+    from_file().
     """
     if len(args) == 0:
         raise TypeError('Cannot wrap nothing')
