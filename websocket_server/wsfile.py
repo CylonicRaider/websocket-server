@@ -564,34 +564,37 @@ class WebSocketFile(object):
         """
         return self.write_frame(constants.OP_BINARY, data)
 
-    def close_now(self):
+    def close_now(self, force=False):
         """
-        close_now() -> None
+        close_now(force=False) -> None
 
-        Close the underlying files immediately and unconditionally.
+        Close the underlying files immediately. If force is true, they are
+        closed unconditionally, otherwise only if the close_wrapped attribute
+        is true.
         This does not perform a proper closing handshake and should be
         avoided in favor of close().
         """
         self._read_close = True
         self._written_close = True
         self._closed = True
-        try:
-            self._rdfile.close()
-        except IOError:
-            pass
-        try:
-            self._wrfile.close()
-        except IOError:
-            pass
-        if self._socket:
+        if force or self.close_wrapped:
             try:
-                self._socket.shutdown(socket.SHUT_RDWR)
-            except socket.error:
+                self._rdfile.close()
+            except IOError:
                 pass
             try:
-                self._socket.close()
-            except socket.error:
+                self._wrfile.close()
+            except IOError:
                 pass
+            if self._socket:
+                try:
+                    self._socket.shutdown(socket.SHUT_RDWR)
+                except socket.error:
+                    pass
+                try:
+                    self._socket.close()
+                except socket.error:
+                    pass
 
     def close_ex(self, code=None, message=None, wait=False):
         """
@@ -622,8 +625,7 @@ class WebSocketFile(object):
             # Already closed?
             if self._written_close:
                 # Close underlying streams if necessary.
-                if (self._read_close and self.close_wrapped and
-                        not self._closed):
+                if self._read_close and not self._closed:
                     self.close_now()
             else:
                 # Write close frame.
