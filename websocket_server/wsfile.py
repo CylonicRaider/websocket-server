@@ -7,6 +7,7 @@ WebSocket protocol implementation.
 See the WebSocketFile class for more information.
 """
 
+import socket
 import struct
 import codecs
 import threading
@@ -563,6 +564,35 @@ class WebSocketFile(object):
         """
         return self.write_frame(constants.OP_BINARY, data)
 
+    def close_now(self):
+        """
+        close_now() -> None
+
+        Close the underlying files immediately and unconditionally.
+        This does not perform a proper closing handshake and should be
+        avoided in favor of close().
+        """
+        self._read_close = True
+        self._written_close = True
+        self._closed = True
+        try:
+            self._rdfile.close()
+        except IOError:
+            pass
+        try:
+            self._wrfile.close()
+        except IOError:
+            pass
+        if self._socket:
+            try:
+                self._socket.shutdown(socket.SHUT_RDWR)
+            except socket.error:
+                pass
+            try:
+                self._socket.close()
+            except socket.error:
+                pass
+
     def close_ex(self, code=None, message=None, wait=False):
         """
         close_ex(code=None, message=None, wait=False) -> None
@@ -594,9 +624,7 @@ class WebSocketFile(object):
                 # Close underlying streams if necessary.
                 if (self._read_close and self.close_wrapped and
                         not self._closed):
-                    self._rdfile.close()
-                    self._wrfile.close()
-                    self._closed = True
+                    self.close_now()
             else:
                 # Write close frame.
                 self.write_single_frame(constants.OP_CLOSE, payload)
