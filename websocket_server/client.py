@@ -9,6 +9,7 @@ quite a low-hanging fruit.
 """
 
 import os
+import threading
 import base64
 
 from .exceptions import ProtocolError
@@ -31,14 +32,40 @@ class TweakHTTPResponse(httplib.HTTPResponse):
     """
     TweakHTTPResponse(...) -> new instance
 
-    Subclass of httplib.HTTPResponse overriding the behavior of automatically
-    closing 101 Switching Protocols responses.
+    Subclass of httplib.HTTPResponse working around shortcomings of the
+    standard library implementation.
     """
+
+    def __init__(self, *args, **kwds):
+        "Initialize lock"
+        httplib.HTTPResponse.__init__(self, *args, **kwds)
+        self._lock = threading.RLock()
+
     def begin(self):
+        """
+        Override the behavior of automatically closing 101 responses
+
+        Those are *meant* to be used further.
+        """
         httplib.HTTPResponse.begin(self)
         if self.status == httplib.SWITCHING_PROTOCOLS:
             self.length = None
             self.will_close = True
+
+    def read(self, amount=None):
+        "Work around race condition between reading and closing"
+        with self._lock:
+            return httplib.HTTPResponse.read(self, amount)
+
+    def readinto(self, buf):
+        "Work around race condition between reading and closing"
+        with self._lock:
+            return httplib.HTTPResponse.readinto(self, buf)
+
+    def close(self):
+        "Work around race condition between reading and closing"
+        with self._lock:
+            return httplib.HTTPResponse.close(self)
 
 def connect(url, protos=None, headers=None, cookies=None, **config):
     """
