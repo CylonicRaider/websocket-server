@@ -579,6 +579,11 @@ class WebSocketFile(object):
         self._written_close = True
         self._closed = True
         if force or self.close_wrapped:
+            if self._socket:
+                try:
+                    self._socket.shutdown(socket.SHUT_RDWR)
+                except socket.error:
+                    pass
             try:
                 self._rdfile.close()
             except IOError:
@@ -588,10 +593,6 @@ class WebSocketFile(object):
             except IOError:
                 pass
             if self._socket:
-                try:
-                    self._socket.shutdown(socket.SHUT_RDWR)
-                except socket.error:
-                    pass
                 try:
                     self._socket.close()
                 except socket.error:
