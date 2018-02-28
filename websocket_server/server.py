@@ -8,28 +8,13 @@ Relies on the standard library's HTTPServer as the actual server.
 """
 
 import base64
-import hashlib
 
 from .compat import unicode, tobytes, BaseHTTPRequestHandler
 from .exceptions import ProtocolError
-from .wsfile import wrap
+from .wsfile import process_key, wrap
 from .tools import parse_paramlist
 
 __all__ = ['WebSocketRequestHandler']
-
-# The "magic" GUID used for Sec-WebSocket-Accept.
-MAGIC_GUID = unicode('258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
-
-def process_key(key):
-    """
-    process_key(key) -> unicode
-
-    Transform the given key as required to form a Sec-WebSocket-Accept
-    field, and return the new key.
-    """
-    enc_key = (unicode(key) + MAGIC_GUID).encode('ascii')
-    key_reply = base64.b64encode(hashlib.sha1(enc_key).digest())
-    return key_reply.decode('ascii')
 
 class WebSocketRequestHandler(BaseHTTPRequestHandler):
     """

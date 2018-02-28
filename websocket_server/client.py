@@ -13,8 +13,7 @@ import threading
 import base64
 
 from .exceptions import ProtocolError
-from .wsfile import wrap
-from .server import process_key
+from .wsfile import client_handshake, wrap
 
 try:
     import httplib
@@ -97,14 +96,11 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
     related error occurs (such as failure to authenticate or redirect), or
     whatever the underlying connection classes raise.
     """
+    if headers is None: headers = {}
     # Allow connection reuse; prevent redirect loops.
     conn, connect_count = None, 32
     # Exceptions can occur anywhere.
     rdfile, wrfile = None, None
-    # Construct headers.
-    if headers is None: headers = {}
-    headers.update({'Connection': 'Upgrade', 'Upgrade': 'websocket',
-                    'Sec-WebSocket-Version': '13'})
     try:
         # May need to follow redirections, autheticate, etc.
         while 1:
@@ -129,14 +125,8 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
                 conn.connect()
             else:
                 raise ValueError('Bad URL scheme.')
-            # Subprotocols.
-            if isinstance(protos, str):
-                headers['Sec-WebSocket-Protocol'] = protos
-            elif protos is not None:
-                headers['Sec-WebSocket-Protocol'] = ', '.join(protos)
-            # Construct key.
-            key = base64.b64encode(os.urandom(16)).decode('ascii')
-            headers['Sec-WebSocket-Key'] = key
+            # Initiate handshake.
+            validate = client_handshake(headers)
             # Cookies.
             if cookies is not None:
                 v = cookies.format_cookie(url)
@@ -194,14 +184,8 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
             else:
                 raise httplib.HTTPException('Cannot handle status code %r' %
                                             resp.status)
-        # Verify key and other fields.
-        if resp.getheader('Sec-WebSocket-Accept') != process_key(key):
-            raise ProtocolError('Invalid reply key')
-        if resp.getheader('Sec-WebSocket-Extensions'):
-            raise ProtocolError('Extensions not supported')
-        p = resp.getheader('Sec-WebSocket-Protocol')
-        if p and (not protos or p not in protos):
-            raise ProtocolError('Invalid subprotocol received')
+        # Validate the response.
+        validate(resp.msg)
         # Construct return value.
         # NOTE: Have to read from resp itself, as it might have buffered the
         #       beginning of the server's data, as those might have been

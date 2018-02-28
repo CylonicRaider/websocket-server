@@ -4,13 +4,18 @@
 """
 WebSocket protocol implementation.
 
-See the WebSocketFile class for more information.
+client_handshake() and server_handshake() perform the appropriate operations
+on mappings of HTTP headers; the WebSocketFile class implements the framing
+protocol.
 """
 
+import os
 import socket
 import struct
+import base64
 import codecs
 import threading
+import hashlib
 from collections import namedtuple
 
 from . import constants
@@ -18,7 +23,7 @@ from .compat import bytearray, bytes, unicode
 from .exceptions import *
 from .tools import mask, new_mask
 
-__all__ = ['WebSocketFile', 'wrap']
+__all__ = ['client_handshake', 'WebSocketFile', 'wrap']
 
 # Allocation unit.
 BUFFER_SIZE = 16384
@@ -43,20 +48,81 @@ Message = namedtuple('Message', ('msgtype', 'content', 'final'))
 # |                               |Masking-key, if MASK set to 1  |
 # +-------------------------------+-------------------------------+
 # | Masking-key (continued)       |          Payload Data         |
-# +-------------------------------- - - - - - - - - - - - - - - - +
+# +-------------------------------+ - - - - - - - - - - - - - - - +
 # :                     Payload Data continued ...                :
 # + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
 # |                     Payload Data continued ...                |
 # +---------------------------------------------------------------+
+
+# The "magic" GUID used for Sec-WebSocket-Accept.
+MAGIC_GUID = unicode('258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+
+def process_key(key):
+    """
+    process_key(key) -> unicode
+
+    Transform the given key as required to form a Sec-WebSocket-Accept
+    field, and return the new key.
+    """
+    enc_key = (unicode(key) + MAGIC_GUID).encode('ascii')
+    resp_key = base64.b64encode(hashlib.sha1(enc_key).digest())
+    return resp_key.decode('ascii')
+
+def client_handshake(headers, protos=None, makekey=None):
+    """
+    client_handshake(headers, protos=None, makekey=None) -> function
+
+    Perform the client-side parts of a WebSocket handshake.
+    headers is a mapping from header names to header values (both Unicode
+    strings) which is modified in-place with WebSocket headers.
+    protos is one of:
+    - None to not advertise subprotocols,
+    - A single string used directly as the Sec-WebSocket-Protocol header,
+    - A list of strings, which are joined by commata into the value of the
+      Sec-WebSocket-Protocol header.
+    NOTE that the value of protos is not validated.
+    makekey, if not None, is a function that returns a byte string of length
+    16 that is used as the base of the Sec-WebSocket-Key header. If makekey
+    *is* None, os.urandom() is used.
+    The return value is a function that takes the response headers (in the
+    same format as headers) as the only parameter and raises a ProtocolError
+    if the handshake is not successful. If the handshake *is* successful, the
+    function returns the subprotocol selected by the server (a string that
+    must have been present in protos), or None (for no subprotocol).
+    NOTE that this library does not support extensions. For future
+         compatibility, it would be prudent to specify makekey, if at all,
+         as a keyword argument.
+    """
+    def check_response(respheaders):
+        # Verify key and other fields.
+        if respheaders.get('Sec-WebSocket-Accept') != process_key(key):
+            raise ProtocolError('Invalid response key')
+        if respheaders.get('Sec-WebSocket-Extensions'):
+            raise ProtocolError('Extensions not supported')
+        p = respheaders.get('Sec-WebSocket-Protocol')
+        # If protos is None, using the "in" operator may fail.
+        if p and (not protos or p not in protos):
+            raise ProtocolError('Invalid subprotocol received')
+        return p
+    if makekey is None: makekey = lambda: os.urandom(16)
+    headers.update({'Connection': 'Upgrade', 'Upgrade': 'websocket',
+        'Sec-WebSocket-Version': '13'})
+    if isinstance(protos, str):
+        headers['Sec-WebSocket-Protocol'] = protos
+    elif protos is not None:
+        headers['Sec-WebSocket-Protocol'] = ', '.join(protos)
+    key = base64.b64encode(makekey()).decode('ascii')
+    headers['Sec-WebSocket-Key'] = key
+    return check_response
 
 class WebSocketFile(object):
     """
     WebSocket protocol implementation. May base on a pair of file-like
     objects (for usage in HTTPRequestHandler's); a "raw" socket (if you
     prefer parsing HTTP headers yourself); or a single file object (if
-    you've got such a read-write one). This class is *not* concerned
-    with the handshake; use other methods (like the built-in HTTP servers
-    (or clients)) for performing it.
+    you have got such a read-write one). This class is not concerned
+    with the handshake; see client_handshake() and server_handshake() for
+    that.
 
     WebSocketFile(rdfile, wrfile, server_side=False)
     rdfile     : File to perform reading operations on.
