@@ -19,7 +19,7 @@ import hashlib
 from collections import namedtuple
 
 from . import constants
-from .compat import bytearray, bytes, unicode
+from .compat import bytearray, bytes, tobytes, unicode
 from .exceptions import *
 from .tools import mask, new_mask
 
@@ -114,6 +114,66 @@ def client_handshake(headers, protos=None, makekey=None):
     key = base64.b64encode(makekey()).decode('ascii')
     headers['Sec-WebSocket-Key'] = key
     return check_response
+
+def server_handshake(headers, protos=None):
+    """
+    server_handshake(headers, protos=None) -> dict
+
+    Perform the server-side part of a WebSocket handshake.
+    headers is a maping from header names to header values (both Unicode
+    strings) which is validated.
+    protos is one of:
+    - None to indicate no subprotocols,
+    - A sequence or whitespace-delimited string of names of accepted
+      subprotocols (the first subprotocol proposed by the client that is
+      in the list is selected),
+    - A function taking the list of subprotocols proposed by the client as
+      the only argument and returning a subprotocol name or None.
+    The return value is a mapping of headers to be included in the response.
+    """
+    def error(msg): raise ProtocolError('Invalid handshake: %s' % msg)
+    # The standard requires a Host header... why not...
+    if 'Host' not in headers:
+        error('Missing Host header')
+    # Validate Upgrade header.
+    if 'websocket' not in headers.get('Upgrade', '').lower():
+        error('Invalid/Missing Upgrade header')
+    # Validate protocol version.
+    if headers.get('Sec-WebSocket-Version') != '13':
+        error('Invalid WebSocket version (!= 13)')
+    # Validate Connection header.
+    connection = [i.lower().strip()
+                  for i in headers.get('Connection', '').split(',')]
+    if 'upgrade' not in connection:
+        error('Invalid/Missing Connection header')
+    # Validate the key.
+    key = headers.get('Sec-WebSocket-Key')
+    try:
+        if len(base64.b64decode(tobytes(key))) != 16:
+            error('Invalid WebSocket key length')
+    except (TypeError, ValueError):
+        error('Invalid WebSocket key')
+    # Extensions are not supported.
+    # Be permissive with subprotocol tokens.
+    protstr = headers.get('Sec-WebSocket-Protocol', '')
+    protlist = ([i.strip() for i in protstr.split(',')] if protstr else [])
+    if protos is None:
+        respproto = None
+    elif callable(protos):
+        respproto = protos(protlist)
+    else:
+        if isinstance(protos, str): protos = protos.split()
+        # Intentionally leaking loop variable.
+        for respproto in protlist:
+            if respproto in protos: break
+        else:
+            respproto = None
+    # Prepare response headers.
+    ret = {'Connection': 'upgrade', 'Upgrade': 'websocket',
+           'Sec-WebSocket-Accept': process_key(key)}
+    if respproto is not None:
+        ret['Sec-WebSocket-Protocol'] = respproto
+    return ret
 
 class WebSocketFile(object):
     """
