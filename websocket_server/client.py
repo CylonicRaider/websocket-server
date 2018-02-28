@@ -133,7 +133,7 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
             if isinstance(protos, str):
                 headers['Sec-WebSocket-Protocol'] = protos
             elif protos is not None:
-                headers['Sec-WebSocket-Protol'] = ', '.join(protos)
+                headers['Sec-WebSocket-Protocol'] = ', '.join(protos)
             # Construct key.
             key = base64.b64encode(os.urandom(16)).decode('ascii')
             headers['Sec-WebSocket-Key'] = key
