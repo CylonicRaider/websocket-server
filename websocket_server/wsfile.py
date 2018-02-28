@@ -29,10 +29,10 @@ __all__ = ['client_handshake', 'WebSocketFile', 'wrap']
 BUFFER_SIZE = 16384
 
 # Frame class
-Frame = namedtuple('Frame', ('opcode', 'payload', 'final', 'msgtype'))
+Frame = namedtuple('Frame', 'opcode payload final msgtype')
 
 # Message class
-Message = namedtuple('Message', ('msgtype', 'content', 'final'))
+Message = namedtuple('Message', 'msgtype content final')
 
 # Adapted from RFC 6455:
 #  0               1               2               3
