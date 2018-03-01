@@ -24,6 +24,12 @@ except NameError:
     # Py3K
     xrange = range
 
+try: # Py2K and recent Py3K
+    callable = callable
+except NameError:
+    # Python 3.0 and 3.1.
+    callable = lambda x: hasattr(x, '__call__')
+
 import sys as _sys
 if _sys.version_info[0] <= 2:
     def tobytes(s):
@@ -34,6 +40,8 @@ else:
 del _sys
 
 try: # Py2K
-    from BaseHTTPServer import BaseHTTPRequestHandler
+    from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
+    from SocketServer import ThreadingMixIn
 except ImportError: # Py3K
-    from http.server import BaseHTTPRequestHandler
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from socketserver import ThreadingMixIn

@@ -14,20 +14,7 @@ import optparse
 import threading
 import email.utils
 
-try: # Py2K and recent Py3K
-    callable = callable
-except NameError:
-    # Python 3.0 and 3.1.
-    callable = lambda x: hasattr(x, '__call__')
-
-try:
-    from BaseHTTPServer import HTTPServer
-except ImportError:
-    from http.server import HTTPServer
-try:
-    from SocketServer import ThreadingMixIn
-except ImportError:
-    from socketserver import ThreadingMixIn
+from .compat import callable, HTTPServer, ThreadingMixIn
 
 __all__ = ['run', 'callback_producer', 'normalize_path', 'FileCache']
 
