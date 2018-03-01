@@ -191,7 +191,9 @@ class WebSocketFile(object):
                  (otherwise).
 
     Attributes:
-    server_side  : Whether this is a server-side WebSocketFile
+    server_side  : Whether this is a server-side WebSocketFile.
+    subprotocol  : The subprotocol to be used on this WebSocketFile.
+                   Defaults to None.
     close_wrapped: Whether calling close() should close the underlying
                    files as well. Defaults to True.
     _rdlock      : threading.RLock instance used for serializing and
@@ -199,10 +201,9 @@ class WebSocketFile(object):
     _wrlock      : threading.RLock instance user for serializing and
                    protecting write-related operations.
                    _rdlock should always be asserted before _wrlock, if at
-                   all; generally don't call reading-related methods
+                   all; generally, do not call reading-related methods
                    (which also include close*()) with _wrlock asserted,
-                   and don't use those locks unless necessary. Make your
-                   own.
+                   and do not use those locks unless necessary.
     _socket      : Underlying socket (set by from_socket()).
                    May not be present at all (i.e. be None). Only use this
                    if you are really sure you need to.
@@ -271,6 +272,7 @@ class WebSocketFile(object):
         self._wrfile = wrfile
         self._socket = None
         self.server_side = server_side
+        self.subprotocol = None
         self.close_wrapped = True
         self._rdlock = threading.RLock()
         self._wrlock = threading.RLock()

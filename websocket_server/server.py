@@ -38,15 +38,16 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         handshake.
         """
         # Perform actual handshake.
-        self.perform_handshake()
+        proto = self.perform_handshake()
         # Wrap the stream in a WebSocket.
-        return self.wrap()
+        return self.wrap(proto)
 
     def perform_handshake(self):
         """
-        perform_handshake() -> None
+        perform_handshake() -> str or None
 
         Effectively perform the WebSocket handshake.
+        Returns the subprotocol to be used, or None for none.
         Raises ProtocolError if the request is not a valid WebSocket
         handshake.
         """
@@ -62,6 +63,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
             self.send_header(header, value)
         self.end_headers()
         self.wfile.flush()
+        return respheaders.get('Sec-WebSocket-Protocol')
 
     def process_subprotocols(self, protos):
         """
@@ -76,14 +78,17 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         """
         return None
 
-    def wrap(self):
+    def wrap(self, proto=None):
         """
-        wrap() -> WebSocketFile
+        wrap(proto=None) -> WebSocketFile
 
         Wrap this handler's connection into a server-side WebSocketFile.
+        proto is the subprotocol to be used by the WebSocket; it is set as
+        the corresponding member of the return value.
         The default implementation calls wsfile.wrap().
         """
         ws = wrap(self.rfile, self.wfile, server_side=True)
+        ws.subprotocol = proto
         # Is done in self.finish().
         ws.close_wrapped = False
         ws._socket = self.connection

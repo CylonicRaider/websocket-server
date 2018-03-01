@@ -185,12 +185,13 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
                 raise httplib.HTTPException('Cannot handle status code %r' %
                                             resp.status)
         # Validate the response.
-        validate(resp.msg)
+        p = validate(resp.msg)
         # Construct return value.
         # NOTE: Have to read from resp itself, as it might have buffered the
         #       beginning of the server's data, as those might have been
         #       coalesced with the headers.
         ret = wrap(resp, wrfile)
+        ret.subprotocol = p
         ret._socket = sock
         ret.request = conn
         ret.response = resp
