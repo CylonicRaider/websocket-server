@@ -486,7 +486,7 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
         sys.stderr.write('Serving HTTP on %s:%s...\n' %
                          (options.host, options.port))
     else:
-        sys.stderr.write('Serving HTTP on port %s...\n' % options.port)
+        sys.stderr.write('Serving HTTP on *:%s...\n' % options.port)
     sys.stderr.flush()
     # Call second preparation hook
     if premain: premain(httpd, options, arguments)
