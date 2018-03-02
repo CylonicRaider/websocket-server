@@ -24,12 +24,15 @@ __version__ = '1.0'
 # Auxiliary modules
 from . import compat, constants, exceptions, tools
 # Main modules
-from . import cookies, wsfile, server, client, quick, examples
+from . import wsfile, cookies, httpserver, client, server
+# Helper modules
+from . import quick, examples
 
 __all__ = constants.__all__ + exceptions.__all__
-__all__ += ['WebSocketFile', 'wrap', 'WebSocketRequestHandler']
+__all__ += ['WebSocketFile', 'wrap', 'connect', 'WebSocketRequestHandler']
 
 from .constants import *
 from .exceptions import *
 from .wsfile import WebSocketFile, wrap
+from .client import connect
 from .server import WebSocketRequestHandler
