@@ -11,30 +11,11 @@ import socket
 import calendar
 import hashlib
 import threading
-import email.utils
 
 from .compat import callable, HTTPServer, ThreadingMixIn
+from .tools import format_http_date, parse_http_date
 
 __all__ = ['callback_producer', 'normalize_path', 'FileCache']
-
-def parse_http_timestamp(date):
-    """
-    parse_http_timestamp(date) -> float
-
-    Parse a timestamp as present in HTTP headers. Return the corresponding
-    UNIX time value.
-    Convenience wrapper around email.utils.parsedate() and
-    calendar.timegm().
-    """
-    return calendar.timegm(email.utils.parsedate(date))
-def format_http_timestamp(ts):
-    """
-    format_http_timestamp(ts) -> str
-
-    Format the given UNIX timestamp to a string as usable in HTTP headers.
-    Convenience wrapper around email.utils.formatdate().
-    """
-    return email.utils.formatdate(ts, usegmt=True)
 
 def normalize_path(path):
     """
@@ -239,7 +220,7 @@ class FileCache:
                 etag = handler.headers.get('If-None-Match')
                 raw_timestamp = handler.headers.get('If-Modified-Since')
                 timestamp = (None if raw_timestamp is None else
-                             parse_http_timestamp(raw_timestamp))
+                             parse_http_date(raw_timestamp))
                 cached = (etag or raw_timestamp)
                 etag_matches = (not etag or etag == self.etag)
                 # HTTP timestamps don't have fractional seconds.
@@ -259,7 +240,7 @@ class FileCache:
             handler.send_header('ETag', self.etag)
             if self.updated:
                 handler.send_header('Last-Modified',
-                                    format_http_timestamp(self.updated))
+                                    format_http_date(self.updated))
             handler.end_headers()
             if send_full:
                 handler.wfile.write(self.data)

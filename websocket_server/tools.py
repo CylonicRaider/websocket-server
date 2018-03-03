@@ -7,9 +7,9 @@ Various tools and utilities.
 
 import os
 import re
-import time
 import calendar
 import collections
+import email.utils
 
 from .compat import bytearray, xrange
 
@@ -110,20 +110,14 @@ def parse_paramlist(string, allow_attributes=True):
     else:
         return [i[0] for i in ret]
 
-# Preferred datetime format from RFC 2616.
-DATETIME_RE = re.compile((r'^(?P<a>\w+), (?P<d>\d+) (?P<b>\w+) (?P<Y>\d+) '
-    r'(?P<H>\d+):(?P<M>\d+):(?P<S>\d+) GMT$').replace(' ', r'\s+'))
-# Month names.
-MONTHS = { 1: 'Jan',  2: 'Feb',  3: 'Mar',  4: 'Apr',
-           5: 'May',  6: 'Jun',  7: 'Jul',  8: 'Aug',
-           9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
-REVMONTHS = dict((v.lower(), k) for k, v in MONTHS.items())
-# Names of days of the week.
-WDAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
+def format_http_date(t):
+    """
+    format_http_date(t) -> str
 
-# ISO 8601 datetiem format.
-ISO_DATETIME_RE = re.compile(r'(?P<Y>\d+) - (?P<m>\d+) - (?P<d>\d+) T? '
-    r'(?P<H>\d+) : (?P<M>\d+) : (?P<S>\d+) Z?'.replace(' ', r'\s*'))
+    Return a string represententing the given UNIX timestamp suitable for
+    inclusion into HTTP headers.
+    """
+    return email.utils.formatdate(ts, usegmt=True)
 
 def parse_http_date(s):
     """
@@ -132,39 +126,7 @@ def parse_http_date(s):
     Parse a timestamp as it occurs in HTTP and return the corresponding UNIX
     time.
     """
-    # Since strptime() depends on the locale, we'll do the parsing ourself.
-    m = DATETIME_RE.match(s.strip())
-    if m:
-        # Interpret month name.
-        try:
-            month = REVMONTHS[m.group('b').lower()]
-        except KeyError:
-            raise ValueError('Bad date')
-        # Assemble time struct.
-        struct = (int(m.group('Y')), month, int(m.group('d')),
-                  int(m.group('H')), int(m.group('M')), int(m.group('S')),
-                  0, 0, 0)
-    else:
-        # ISO 8601, perhaps?
-        m = ISO_DATETIME_RE.match(s.strip())
-        if not m: raise ValueError('Bad date')
-        struct = (int(m.group('Y')), int(m.group('m')), int(m.group('d')),
-                  int(m.group('H')), int(m.group('M')), int(m.group('S')),
-                  0, 0, 0)
-    # Return corresponding timestamp.
-    return calendar.timegm(struct)
-
-def format_http_date(t):
-    """
-    format_http_date(t) -> str
-
-    Return a string represententing the given UNIX timestamp suitable for
-    inclusion into HTTP headers.
-    """
-    struct = time.gmtime(t)
-    ret = time.strftime('#a, %d #b %Y %H:%M:%S GMT', struct)
-    return ret.replace('#a', WDAYS[struct[6]]).replace('#b',
-                                                       MONTHS[struct[1]])
+    return calendar.timegm(email.utils.parsedate(date))
 
 class CaseDict(collections.MutableMapping):
     """
