@@ -7,9 +7,13 @@ Server implementation.
 Relies on the standard library's HTTPServer as the actual server.
 """
 
-from .compat import BaseHTTPRequestHandler
 from .exceptions import ProtocolError
 from .wsfile import server_handshake, wrap
+
+try: # Py2K
+    from BaseHTTPServer import BaseHTTPRequestHandler
+except ImportError: # Py3K
+    from http.server import BaseHTTPRequestHandler
 
 __all__ = ['WebSocketRequestHandler']
 

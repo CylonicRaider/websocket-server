@@ -38,10 +38,3 @@ else:
     def tobytes(s):
         return bytes(s, 'utf-8')
 del _sys
-
-try: # Py2K
-    from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
-    from SocketServer import ThreadingMixIn
-except ImportError: # Py3K
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    from socketserver import ThreadingMixIn

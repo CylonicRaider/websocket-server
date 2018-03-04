@@ -12,8 +12,15 @@ import calendar
 import hashlib
 import threading
 
-from .compat import callable, HTTPServer, ThreadingMixIn
+from .compat import callable
 from .tools import format_http_date, parse_http_date
+
+try: # Py2K
+    from BaseHTTPServer import HTTPServer
+    from SocketServer import ThreadingMixIn
+except ImportError: # Py3K
+    from http.server import HTTPServer
+    from socketserver import ThreadingMixIn
 
 __all__ = ['callback_producer', 'normalize_path', 'FileCache']
 
