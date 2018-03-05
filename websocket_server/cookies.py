@@ -11,6 +11,7 @@ standard library are, frankly, utterly insufficient.
 import os
 import re
 import time
+
 from . import tools
 from .compat import bytes, unicode
 
@@ -825,3 +826,129 @@ class LWPCookieJar(FileCookieJar):
                 raise CookieLoadError('Invalid cookie line.')
             self.add(Cookie.parse(m.group(1), parse_attr=parse_attr,
                                   make_url=make_url))
+
+class RequestHandlerCookies:
+    """
+    RequestHandlerCookies(handler, descs) -> new instance
+
+    This class automates the gathering and sending of cookie headers in
+    BaseHTTPRequestHandler instances. handler is the request handler object
+    to work with. descs is a mapping of "cookie descriptions" that are used to
+    reconstruct attributes of cookies received from the client; cookie names
+    are mapped to URL-s which are used as third parameters to Cookie.create()
+    (see there for details). descs also acts as a whitelist; cookies not
+    included in it are ignored and (in particular) not sent back.
+
+    The mapping protocol is partially implemented; for complex operations,
+    create a dict instance.
+    """
+
+    def __init__(self, handler, descs):
+        """
+        __init__(handler, descs) -> None
+
+        See class docstring for details.
+        """
+        self.handler = handler
+        self.descs = descs
+        self.cookies = {}
+
+    def __getitem__(self, key):
+        """
+        self[key] -> value
+
+        Return the cookie with the name key.
+        """
+        return self.cookies[key]
+
+    def __setitem__(self, key, value):
+        """
+        self[key] = value
+
+        Set the cookie corresponding to key to value.
+        """
+        self.cookies[key] = value
+
+    def __delitem__(self, key):
+        """
+        del self[key]
+
+        Remove the cookie named by key from self.
+        """
+        del self.cookies[key]
+
+    def keys(self):
+        """
+        keys() -> Keys
+
+        Return the names of the cookies stored by this instance.
+        """
+        return self.cookies.keys()
+
+    def get(self, name, default=None):
+        """
+        get(name, default=None) -> value
+
+        Return the cookie corresponding to name, or default if not found.
+        """
+        return self.cookies.get(name, default)
+
+    def make(self, name, value):
+        """
+        make(name, value) -> Cookie
+
+        Create and store a cookie with the given name and value, and return
+        it. name must be in the descs instance member, which is used to
+        initialize the cookie's attributes, or a KeyError occurs.
+        """
+        c = Cookie.create(name, value, self.descs[name])
+        self.cookies[name] = c
+        return c
+
+    def load(self):
+        """
+        load() -> None
+
+        Update the internal cookie mapping with cookies extracted from the
+        handler's HTTP request. Cookies whose names are not in the descs
+        member are ignored.
+        """
+        hdrlines = self.handler.headers.getallmatchingheaders('Cookie')
+        # Assemble folded lines. ._.
+        headers = []
+        for line in hdrlines:
+            if line[:1].isspace():
+                # A continuation line in the very beginning should not
+                # happen.
+                headers[-1] += line
+            else:
+                headers.append(line)
+        pairs = {}
+        for h in headers:
+            pairs.update(parse_cookie(COOKIE_HEADER.sub('', h)))
+        for k, v in pairs.items():
+            try:
+                self.cookies[k] = Cookie.create(k, v, self.descs[k])
+            except KeyError:
+                pass
+
+    def send(self):
+        """
+        send() -> None
+
+        Submit the cookies stored in this instance to the HTTP client.
+        """
+        if gc: self.gc()
+        for c in self.cookies.values():
+            self.handler.send_header('Set-Cookie', c.format('set'))
+
+    def gc(self):
+        """
+        gc() -> None
+
+        Remove all cookies from this instance that are not "fresh" (as
+        determined by their is_fresh() method).
+        """
+        for k, cookie in tuple(self.cookies.items()):
+            if not cookie.is_fresh():
+                del self.cookies[k]
