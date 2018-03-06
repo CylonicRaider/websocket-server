@@ -13,13 +13,14 @@ import hashlib
 import threading
 
 from .compat import callable
+from .cookies import RequestHandlerCookies
 from .tools import format_http_date, parse_http_date
 
 try: # Py2K
-    from BaseHTTPServer import HTTPServer
+    from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
     from SocketServer import ThreadingMixIn
 except ImportError: # Py3K
-    from http.server import HTTPServer
+    from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
 
 __all__ = ['callback_producer', 'normalize_path', 'FileCache']
@@ -408,3 +409,76 @@ def callback_producer(callback, base='', guess_type=True):
             cnttype = None
         return FileCache.Entry(parent, path, data, time.time(), cnttype)
     return produce
+
+class HTTPRequestHandler(BaseHTTPRequestHandler):
+    """
+    An HTTP request handler with additional convenience functions.
+    """
+
+    def setup(self):
+        """
+        setup() -> None
+
+        Perform instance initialization.
+        """
+        BaseHTTPRequestHandler.setup(self)
+        self._cookies = None
+
+    def cookie_descs(self):
+        """
+        cookie_descs() -> dict
+
+        Return a mapping of cookie descriptions. See RequestHandlerCookies
+        for details.
+        """
+        return {}
+
+    @property
+    def cookies(self):
+        """
+        cookies -> RequestHandlerCookies
+
+        A mapping-like object containing cookies for this request.
+        On the first access, the property is initialized from the request;
+        thereafter, the same cached object is returned. It may be modified
+        in-place. To submit the (possibly modified) cookies with the
+        response, invoke the send() method of the cookies object while
+        sending headers.
+        """
+        if self._cookies is not None: return self._cookies
+        self._cookies = RequestHandlerCookies(self, self.cookie_descs())
+        self._cookies.load()
+        return self._cookies
+
+    def send_text(self, code, text, cnttype=None, cookies=False):
+        """
+        send_text(code, text, cnttype=None, cookies=False) -> None
+
+        Send a complete minimal HTTP response. code is the HTTP status code
+        to use (e.g. 200 or 404), text is the response body to send (a
+        Unicode string), cnttype is the MIME type to use (defaulting to
+        text/plain), cookies specifies whether cookies should be sent along
+        with the response.
+        """
+        if cnttype is None: cnttype = 'text/plain; charset=utf-8'
+        enctext = text.encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type', cnttype)
+        self.send_header('Content-Length', len(enctext))
+        if cookies: self.cookies.send()
+        self.end_headers()
+        self.wfile.write(enctext)
+
+    def send_redirect(self, code, target, cookies=False):
+        """
+        send_redirect(code, target, cookies=False) -> None
+
+        Send a complete mimimal HTTP redirect response. code is the status
+        code to use (e.g. 303), target is the URL to redirect to, cookies
+        specifies whether cookies should be sent along with the response.
+        """
+        self.send_response(code)
+        self.send_header('Location', target)
+        self.send_header('Content-Length', 0)
+        if cookies: self.cookies.send()
+        self.end_headers()
