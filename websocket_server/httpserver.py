@@ -5,14 +5,14 @@
 HTTP server support.
 """
 
-import sys, os, time
+import sys, os, re, time
 import errno
 import socket
 import calendar
 import hashlib
 import threading
 
-from .compat import callable
+from .compat import callable, unicode
 from .cookies import RequestHandlerCookies
 from .tools import format_http_date, parse_http_date
 
@@ -23,7 +23,30 @@ except ImportError: # Py3K
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
 
-__all__ = ['callback_producer', 'normalize_path', 'FileCache']
+__all__ = ['HTTPError', 'normalize_path', 'FileCache', 'callback_producer',
+           'HTTPRequestHandler', 'RoutingRequestHandler', 'RouteSet']
+
+WILDCARD_RE = re.compile(r'<([a-zA-Z_][a-zA-Z0-9_]*)>|\\(.)')
+
+class HTTPError(Exception):
+    """
+    HTTPError(code, desc=None) -> new instance
+
+    Exceptions of this type may be raised by RoutingRequestHandler callbacks
+    to force a particular HTTP response. code is the HTTP status code to
+    transmit; desc is an optional string giving detail on the exact reason
+    of the error; see RoutingRequestHandler.send_code() for the layout of the
+    response body.
+    """
+
+    def __init__(self, code, desc=None):
+        """
+        __init__(code, desc=None) -> None
+
+        Instance initializer; see class docstring for details.
+        """
+        self.code = code
+        self.desc = desc
 
 def normalize_path(path):
     """
@@ -466,12 +489,12 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         tracebacks).
         """
         if cnttype is None: cnttype = 'text/plain; charset=utf-8'
-        if isinstance(text, unicode): text = (text,)
+        if isinstance(text, (str, unicode)): text = (text,)
         parts = []
         for t in text:
             if t is None:
                 continue
-            elif isinstance(t, unicode):
+            elif isinstance(t, (str, unicode)):
                 parts.append(t)
             elif isinstance(t, BaseException):
                 parts.append('%s: %s' % (t.__class__.__name__, t))
@@ -498,3 +521,261 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', 0)
         if cookies: self.cookies.send()
         self.end_headers()
+
+class RoutingRequestHandler(HTTPRequestHandler):
+    """
+    An HTTP request handler providing sophisticated routing capabilities.
+
+    This class intercepts all do_*() methods (if not explicitly defined by a
+    child class), provides a bunch of convenience methods for sending common
+    HTTP responses, and overrides the default error handler to match the
+    latters' style.
+    """
+
+    routes = None
+
+    def __getattr__(self, name):
+        "Hack to capture HTTP requests regardless of method."
+        if name.startswith('do_'):
+            return self.handle_request
+        raise AttributeError(name)
+
+    def send_code(self, code, message=None):
+        """
+        send_code(code, message=None) -> None
+
+        Send a resposne with code as the status code and the following
+        plain-text body:
+
+            <CODE> <PHRASE>
+            <MESSAGE>
+
+        where <CODE> is code (e.g., 400), <PHRASE> is the verbal description
+        of the code (e.g., "Bad Request"), and <MESSAGE> is message (e.g.,
+        "Missing required header field.").
+        """
+        phrase, explanation = self.responses.get(code, ('???', None))
+        self.send_text(code, (str(code), ' ', phrase,
+                              '\n' if message else '', message))
+
+    def send_200(self, text=None):
+        "Send an OK response; see send_code()."
+        self.send_code(200, text)
+    def send_400(self, text=None):
+        "Send a Bad Request response; see send_code()."
+        self.send_code(400, text)
+    def send_403(self, text=None):
+        "Send a Forbidden response; see send_code()."
+        self.send_code(403, text)
+    def send_404(self, text=None):
+        "Send a Not Found response; see send_code()."
+        self.send_code(404, text)
+    def send_405(self, text=None):
+        "Send a Method Not Allowed response; see send_code()."
+        self.send_code(405, text)
+    def send_500(self, text=None):
+        "Send an Internal Server Error response; see send_code()."
+        self.send_code(500, text)
+
+    def send_error(self, code, message=None):
+        """
+        send_error(code, message=None) -> None
+
+        Send and log an error reply. This overrides the same-named parent
+        class' method to provide a style consistent with the send_*()
+        convenience methods.
+        """
+        self.log_error('code %d, message %s', code, message)
+        if self.command != 'HEAD' and code >= 200 and code not in (204, 205,
+                                                                   304):
+            self.send_code(code, message)
+        else:
+            self.send_text(code, '')
+
+    def handle_request(self):
+        """
+        handle_request() -> None
+
+        Actually handle a request by matching it to a route and invoking the
+        corresponding callback; see RouteSet for details.
+        """
+        try:
+            res = self.routes.get(self.command, self.path)
+            if res:
+                func, kwds = res
+                res = (not func(self, **kwds))
+            if not res:
+                self.handle_default()
+        except HTTPError as e:
+            self.send_code(e.code, e.desc)
+        except Exception as e:
+            self.handle_exception(e)
+
+    def handle_exception(self, exc):
+        """
+        handle_exception(exc) -> None
+
+        Handle an exception that was raised while handling a request. The
+        default implementation logs the exception and returns a plain 500
+        response.
+        """
+        self.log_error(exc)
+        self.send_500()
+
+    def handle_fallback(self):
+        """
+        handle_fallback() -> None
+
+        Handle a request that no route matched. The default implementation
+        responds to GET requests with a 404 and to all other requests with
+        a 405.
+        """
+        if self.command == 'GET':
+            self.send_404()
+        else:
+            self.send_405()
+
+class RouteSet:
+    """
+    RouteSet(fixroutes=None, dynroutes=None, fbfunc=None) -> new instance
+
+    A set of routes for a RoutingRequestHandler. fixroutes is a mapping from
+    (method, path) pairs to functions to be invoked by the request handler.
+    dynroutes is a mapping from request methods to lists of (regex, cb)
+    pairs; for each request, after considering fixed routes, the list
+    corresponding to the request method is retrieved, and iterated through
+    until a regular expression is found that matches the request's path; the
+    function corresponding to it is invoked. fbfunc is the fallback function
+    to be invoked when neither fixed nor dynamic routes matched.
+
+    Callbacks are invoked with the RoutingRequestHandler instance as an
+    explicit first positional argument, and, for dynamic routes, with the
+    named groupings of the regex as keyword arguments. By returning a true
+    value, a callback communicates that it did *not* handle the request, and
+    fallback behavior should be applied (in particular, a return value of
+    None inhibits the fallback behavior).
+
+    Instances of this class can be used as decorators, as illustrated below:
+    >>> route = RouteSet()
+    >>> @route('/hello')
+    ... def handle_hello(self):
+    ...     ... # handle GET requests to /hello
+    ...
+    >>> @route('/invite/<code>', 'POST')
+    ... def handle_invite(self, code):
+    ...     ... # handle POST requests to /invite/*
+    ...
+    >>> @route.fallback
+    ... def handle_fallback(self):
+    ...     ... # handle any requests not matched above
+    ...
+    >>> RequestHandler = route.build(RoutingRequestHandler)
+    """
+
+    def __init__(self, fixroutes=None, dynroutes=None, fbfunc=None):
+        """
+        __init__(fixroutes=None, dynroutes=None, fbfunc=None) -> None
+
+        Instance initializer; see the class docstring for details.
+        """
+        if fixroutes is None: fixroutes = {}
+        if dynroutes is None: dynroutes = {}
+        self.fixroutes = fixroutes
+        self.dynroutes = dynroutes
+        self.fbfunc = fbfunc
+
+    def add(self, func, path, method='GET'):
+        """
+        add(func, path, method='GET') -> None
+
+        Add a new route to the route set. func is the callback to invoke (see
+        the class docstring for semantics); path is the path template to
+        match (see below); method is the request method to match (note that
+        matching is case-sensitive).
+
+        path may contain "wildcards" following the "<NAME>" pattern (where
+        NAME is an identifier), and escape sequences consisting of a
+        backslash followed by a less-than sign (<). Using less-than signs or
+        backslashes in ways other than described here is not specified and
+        the behavior can change incompatibly in the future.
+        If a wildcard or escape sequence is present, the route automatically
+        becomes dynamic; each wildcard matches a "path component" (i.e. a
+        sequence of characters not containing slashes or question marks),
+        and the matched path component is passed to the callback as a named
+        argument (with the name taken from the wildcard).
+        """
+        pos, wildcards, regex = 0, False, ['^']
+        while 1:
+            m = WILDCARD_RE.search(path, pos)
+            if not m: break
+            wildcards = True
+            regex.append(re.escape(path[pos:m.start()]))
+            if m.group(1) is not None:
+                regex.append(r'(?P<%s>[^/?]+)' % m.group(1))
+            else:
+                regex.append(re.escape(m.group(2)))
+            pos = m.end()
+        if wildcards:
+            regex.append(path[pos:])
+            regex.append('$')
+            regex = re.compile(''.join(regex))
+            self.dynroutes.setdefault(method, []).append((regex, func))
+        else:
+            self.fixroutes[method, path] = func
+
+    def fallback(self, func):
+        """
+        fallback(func) -> None
+
+        Make func the fallback function in this route set.
+        """
+        self.fbfunc = func
+        return func
+
+    def get(self, method, path):
+        """
+        get(method, path) -> (function, dict) or None
+
+        Retrieve a callback to be invoked to handle a request to path and
+        keyword arguments to pass to it, or None if no route matches path.
+        """
+        path = path.partition('?')[0]
+        try:
+            return (self.fixroutes[method, path], {})
+        except KeyError:
+            for r in self.dynroutes.get(method, ()):
+                m = r[0].match(path)
+                if m: return (r[1], m.groupdict())
+        if self.fbfunc is not None: return (self.fbfunc, {})
+        return None
+
+    def build(self, baseclass, namespace=None):
+        """
+        build(baseclass, namespace=None) -> type
+
+        Return a newly created subclass of baseclass (which should be
+        RoutingRequestHandler or a child class) configured to serve requests
+        using the routes contained in this instance. If namespace is not
+        None, it must be a mapping containing class variables to set on the
+        returned class; it is amended (out-of-place) by a "routes" key mapped
+        to this instance.
+        """
+        if namespace is None:
+            namespace = {'routes': self}
+        else:
+            namespace = dict(namespace, routes=self)
+        return type('<anonymous>', (baseclass,), namespace)
+
+    def __call__(self, *args, **kwds):
+        """
+        self(...) -> function
+
+        This is a convenience wrapper around add() that allows the use of
+        this instance as a decorator. The returned function takes a single
+        argument, and passes it, followed by all arguments to this function,
+        on to add().
+        """
+        def callback(func):
+            self.add(func, *args, **kwds)
+            return func
+        return callback
