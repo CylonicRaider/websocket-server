@@ -609,6 +609,9 @@ class RoutingRequestHandler(HTTPRequestHandler):
     child class), provides a bunch of convenience methods for sending common
     HTTP responses, and overrides the default error handler to match the
     latters' style.
+    This class enables HTTPRequestHandler's advanced logging by default; the
+    "extra" key is initialized to an empty dictionary, which can be used
+    immediately.
     """
 
     routes = None
@@ -618,6 +621,15 @@ class RoutingRequestHandler(HTTPRequestHandler):
         if name.startswith('do_'):
             return self.handle_request
         raise AttributeError(name)
+
+    def setup(self):
+        """
+        setup() -> None
+
+        Perform instance initialization.
+        """
+        HTTPRequestHandler.setup(self)
+        self._log_data = {'extra': {}}
 
     def send_code(self, code, message=None):
         """
