@@ -13,7 +13,8 @@ import email.utils
 
 from .compat import bytearray, xrange
 
-__all__ = ['mask', 'new_mask', 'parse_paramlist']
+__all__ = ['mask', 'new_mask', 'parse_paramlist', 'format_http_date',
+           'parse_http_date', 'CaseDict']
 
 def mask(key, data):
     """
