@@ -27,6 +27,9 @@ __all__ = ['HTTPError', 'normalize_path', 'FileCache', 'callback_producer',
            'HTTPRequestHandler', 'RoutingRequestHandler', 'RouteSet']
 
 WILDCARD_RE = re.compile(r'<([a-zA-Z_][a-zA-Z0-9_]*)>|\\(.)')
+ESCAPE_RE = re.compile(r'[\0-\x1f \\]')
+ESCAPE_INNER_RE = re.compile(r'[\0- \\"]')
+QUOTE_RE = re.compile(r'[\0-\x1f\\"]')
 
 class HTTPError(Exception):
     """
@@ -436,6 +439,18 @@ def callback_producer(callback, base='', guess_type=True):
 class HTTPRequestHandler(BaseHTTPRequestHandler):
     """
     An HTTP request handler with additional convenience functions.
+
+    To enable advanced logging, set the _log_data attribute to a new
+    dictionary in the setup() method. The following keys are of significance:
+    userid: The identity of the user submitting the request as a string. Not
+            set by HTTPRequestHandler, but might be set by user code.
+    code  : The HTTP status code. Set in log_request().
+    size  : The HTTP response size. Set in log_request() and send_header().
+    extra : Extra data as a mapping. The keys must be strings while the
+            values' str() representation should be something meaningful.
+    To use cookies, override the cookie_descs() method to return a mapping of
+    cookie descriptions. (Not overriding it will work as well, but no cookies
+    will be captured from the request in that case.)
     """
 
     def setup(self):
@@ -446,6 +461,70 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         """
         BaseHTTPRequestHandler.setup(self)
         self._cookies = None
+        self._log_data = None
+
+    def log_request(self, code='-', size='-'):
+        """
+        log_request(code='-', size='-') -> None
+
+        Log an HTTP request, using the given code and response size. This
+        implementation can behave in two ways:
+        - If the _log_data attribute is set to None, the parent class'
+          method is called, and nothing else happens.
+        - Otherwise (_log_data must be a dictionary in that case), the code
+          and response size are stored in it and logging the request is
+          withheld to be able to capture more data. Call really_log_request()
+          to really log the request.
+        """
+        if self._log_data is None:
+            return BaseHTTPRequestHandler.log_request(self, code, size)
+        code = None if code == '-' else int(code)
+        size = None if size == '-' else int(size)
+        self._log_data.update(code=code, size=size)
+
+    def send_header(self, name, value):
+        """
+        send_header(name, value) -> None
+
+        Send a HTTP header. This method forwards to the parent class, and
+        also captures Content-Length headers if advanced logging is enabled.
+        """
+        BaseHTTPRequestHandler.send_header(name, value)
+        if self._log_data is not None and name.lower() == 'content-type':
+            self._log_data['size'] = value
+
+    def really_log_request(self):
+        """
+        really_log_request() -> None
+
+        Log an HTTP request using an extended format. If the _log_data
+        attribute is None, this does nothing (assuming that log_request() has
+        already been called).
+        """
+        def makehex(m):
+            return r'\x%02x' % ord(m.group())
+        def escape(s):
+            if s is None: return '-'
+            return ESCAPE_RE.sub(makehex, s)
+        def escape_inner(s):
+            return ESCAPE_INNER_RE.sub(makehex, s)
+        def quote(s):
+            if s is None: return '-'
+            return '"' + QUOTE_RE.sub(makehex, s) + '"'
+        if self._log_data is None: return
+        extradata = self._log_data.get('extra')
+        if extradata:
+            extra = ' "' + ' '.join(escape_inner(k) + '=' +
+                escape_inner(str(v)) for k, v in extradata.items()) + '"'
+        else:
+            extra = ''
+        sys.stderr.write('%s - %s [%s] %s %s %s %s %s%s\n' % (
+            self.client_address[0], escape(self._log_data.get('userid')),
+            self.log_date_time_string, quote(self.requestline),
+            self._log_data.get('code', '-'), self._log_data.get('size', '-'),
+            quote(self.headers.get('Referer')),
+            quote(self.headers.get('User-Agent')), extra))
+        sys.stderr.flush()
 
     def cookie_descs(self):
         """
