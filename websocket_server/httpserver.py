@@ -955,7 +955,7 @@ class RouteSet:
             namespace = {'routes': self}
         else:
             namespace = dict(namespace, routes=self)
-        return type('<anonymous>', (baseclass,), namespace)
+        return type('<anonymous>', (baseclass, object), namespace)
 
     def __call__(self, *args, **kwds):
         """
