@@ -830,6 +830,24 @@ class RouteSet:
         self.dynroutes = dynroutes
         self.fbfunc = fbfunc
 
+    def __copy__(self):
+        """
+        __copy__() -> RouteSet
+
+        Return a shallow copy of this instance.
+        """
+        return self.copy()
+
+    def copy(self):
+        """
+        copy() -> RouteSet
+
+        Return a copy of this instance.
+        """
+        return RouteSet(dict(self.fixroutes),
+                        dict((k, list(v)) for k, v in self.dynroutes),
+                        self.fbfunc)
+
     def add(self, func, path, method='GET'):
         """
         add(func, path, method='GET') -> None
