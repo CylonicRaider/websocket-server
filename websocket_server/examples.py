@@ -39,7 +39,7 @@ def handle_echo(self):
 # Serve a static page on the root.
 @route('/')
 def route_root(self):
-    page = pkgutil.get_data(__package__, 'testpage.html').decode('utf-8')
+    page = pkgutil.get_data(__package__, 'testpage.html')
     self.send_text(200, page, 'text/html; charset=utf-8')
 
 def main():

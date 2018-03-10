@@ -627,26 +627,29 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         to use (e.g. 200 or 404), text is the response body to send, cnttype
         is the MIME type to use (defaulting to text/plain), cookies specifies
         whether cookies should be sent along with the response.
-        text is either a single Unicode string or a sequence of things which
-        are formatted and concatenated to obtain the final response. Valid
-        things are the None singleton (which is ignored), Unicode strings
-        (which are used without modification), and exception objects (which
-        are formatted similarly to the built-in exception formatter, without
-        tracebacks).
+        text is either a single string or a sequence of things which are
+        formatted and concatenated to obtain the final response. Valid things
+        are the None singleton (which is ignored), Unicode strings (which are
+        encoded using UTF-8), byte strings (which are used without
+        modification), and exception objects (which are formatted similarly
+        to the built-in exception formatter, without tracebacks).
         """
         if cnttype is None: cnttype = 'text/plain; charset=utf-8'
-        if isinstance(text, (str, unicode)): text = (text,)
+        if isinstance(text, (str, unicode, bytes)): text = (text,)
         parts = []
         for t in text:
             if t is None:
                 continue
             elif isinstance(t, (str, unicode)):
+                parts.append(t.encode('utf-8'))
+            elif isinstance(t, bytes):
                 parts.append(t)
             elif isinstance(t, BaseException):
-                parts.append('%s: %s' % (t.__class__.__name__, t))
+                s = '%s: %s' % (t.__class__.__name__, t)
+                parts.append(s.encode('utf-8'))
             else:
                 raise TypeError('Cannot handle %r as text' % (t,))
-        enctext = ''.join(parts).encode('utf-8')
+        enctext = b''.join(parts)
         self.send_response(code)
         self.send_header('Content-Type', cnttype)
         self.send_header('Content-Length', len(enctext))
