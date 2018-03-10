@@ -517,8 +517,9 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         really_log_request() -> None
 
         Log an HTTP request using an extended format. If the _log_data
-        attribute is None, this does nothing (assuming that log_request() has
-        already been called).
+        attribute is None, this does nothing (assuming that the request has
+        already been logged); this method sets it to None to allow multiple
+        invocations to produce only one log entry.
         """
         def makehex(m):
             return r'\x%02x' % ord(m.group())
@@ -550,6 +551,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             quote(self.headers.get('Referer')),
             quote(self.headers.get('User-Agent')), extra))
         sys.stderr.flush()
+        self._log_data = None
 
     def cookie_descs(self):
         """
@@ -695,6 +697,16 @@ class RoutingRequestHandler(HTTPRequestHandler):
         """
         HTTPRequestHandler.setup(self)
         self._log_data = {'extra': {}}
+
+    def end_headers(self):
+        """
+        end_headers() -> None
+
+        Finish submitting headers. This implementation additionally writes
+        out an advanced log entry.
+        """
+        HTTPRequestHandler.end_headers(self)
+        self.really_log_request()
 
     def send_code(self, code, message=None):
         """
