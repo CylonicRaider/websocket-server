@@ -8,9 +8,15 @@ Convenience functions for quick usage.
 import sys
 import optparse
 
-from .httpserver import ThreadingHTTPServer, FileCache, callback_producer
+from .server import WebSocketMixIn
+from .httpserver import ThreadingHTTPServer, RoutingRequestHandler
 
-__all__ = ['run']
+__all__ = ['QuickRequestHandler', 'run']
+
+class QuickRequestHandler(RoutingRequestHandler, WebSocketMixIn):
+    """
+    An HTTP request handler combining all the package's functionality.
+    """
 
 def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
     """

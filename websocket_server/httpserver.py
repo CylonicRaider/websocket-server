@@ -2,7 +2,11 @@
 # https://github.com/CylonicRaider/websocket-server
 
 """
-HTTP server support.
+Convenience extensions for the standard library's HTTP server framework.
+
+The classes in this module implement support for static file retrieval,
+advanced logging, query string / POST submission parsing, cookies, and
+request routing.
 """
 
 import sys, os, re, time
@@ -24,7 +28,7 @@ except ImportError: # Py3K
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
 
-__all__ = ['HTTPError', 'normalize_path', 'FileCache', 'callback_producer',
+__all__ = ['HTTPError', 'FileCache', 'callback_producer',
            'HTTPRequestHandler', 'RoutingRequestHandler', 'RouteSet']
 
 WILDCARD_RE = re.compile(r'<([a-zA-Z_][a-zA-Z0-9_]*)>|\\(.)')
@@ -504,8 +508,8 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         Send a HTTP header. This method forwards to the parent class, and
         also captures Content-Length headers if advanced logging is enabled.
         """
-        BaseHTTPRequestHandler.send_header(name, value)
-        if self._log_data is not None and name.lower() == 'content-type':
+        BaseHTTPRequestHandler.send_header(self, name, value)
+        if self._log_data is not None and name.lower() == 'content-length':
             self._log_data['size'] = value
 
     def really_log_request(self):
@@ -523,6 +527,11 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             return ESCAPE_RE.sub(makehex, s)
         def escape_inner(s):
             return ESCAPE_INNER_RE.sub(makehex, s)
+        def escape_int(s):
+            try:
+                return str(int(s))
+            except (TypeError, ValueError):
+                return '-'
         def quote(s):
             if s is None: return '-'
             return '"' + QUOTE_RE.sub(makehex, s) + '"'
@@ -535,8 +544,9 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             extra = ''
         sys.stderr.write('%s - %s [%s] %s %s %s %s %s%s\n' % (
             self.client_address[0], escape(self._log_data.get('userid')),
-            self.log_date_time_string, quote(self.requestline),
-            self._log_data.get('code', '-'), self._log_data.get('size', '-'),
+            self.log_date_time_string(), quote(self.requestline),
+            escape_int(self._log_data.get('code')),
+            escape_int(self._log_data.get('size')),
             quote(self.headers.get('Referer')),
             quote(self.headers.get('User-Agent')), extra))
         sys.stderr.flush()
@@ -756,6 +766,8 @@ class RoutingRequestHandler(HTTPRequestHandler):
             self.send_code(e.code, e.desc)
         except Exception as e:
             self.handle_exception(e)
+        finally:
+            self.really_log_request()
 
     def handle_exception(self, exc):
         """
@@ -765,7 +777,7 @@ class RoutingRequestHandler(HTTPRequestHandler):
         default implementation logs the exception and returns a plain 500
         response.
         """
-        self.log_error(exc)
+        self.log_error('%r', exc)
         self.send_500()
 
     def handle_fallback(self):

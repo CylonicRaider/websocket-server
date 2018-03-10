@@ -4,10 +4,10 @@
 """
 Server implementation.
 
-Relies on the standard library's HTTPServer as the actual server.
+Relies on the standard library's HTTP server framework for the HTTP serving
+part; is also compatible with the websocket_server.httpserver module.
 """
 
-from .exceptions import ProtocolError
 from .wsfile import server_handshake, wrap
 
 try: # Py2K
@@ -15,11 +15,11 @@ try: # Py2K
 except ImportError: # Py3K
     from http.server import BaseHTTPRequestHandler
 
-__all__ = ['WebSocketRequestHandler']
+__all__ = ['WebSocketMixIn', 'WebSocketRequestHandler']
 
-class WebSocketRequestHandler(BaseHTTPRequestHandler):
+class WebSocketMixIn:
     """
-    Extension of BaseHTTPRequestHandler allowing to handle WebSockets.
+    Mixin class for BaseHTTPRequestHandler implementing WebSocket handshakes.
 
     Use the handshake() method in do_*() method to actually initiate a
     WebSocket connections; the handler method must not return until the
@@ -29,17 +29,14 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
     server will only accept one WebSocket session at a time.
     """
 
-    # Override default from StreamRequestHandler
-    rbufsize = 0
-
     def handshake(self):
         """
         handshake() -> WebSocketFile
 
         Perform a WebSocket handshake and return a WebSocketFile
         representing the current session.
-        Raises ProtocolError if the request is not a valid WebSocket
-        handshake.
+        Raises a ProtocolError (without sending an HTTP response) if the
+        request is not a valid WebSocket handshake.
         """
         # Perform actual handshake.
         proto = self.perform_handshake()
@@ -52,15 +49,11 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
 
         Effectively perform the WebSocket handshake.
         Returns the subprotocol to be used, or None for none.
-        Raises ProtocolError if the request is not a valid WebSocket
-        handshake.
+        Raises a ProtocolError (without sending an HTTP response) if the
+        request is not a valid WebSocket handshake.
         """
-        try:
-            respheaders = server_handshake(self.headers,
-                                           self.process_subprotocols)
-        except ProtocolError as e:
-            self._error(e.args[0])
-            raise
+        respheaders = server_handshake(self.headers,
+                                       self.process_subprotocols)
         # Send a handshake reply.
         self.send_response(101)
         for header, value in respheaders.items():
@@ -98,23 +91,7 @@ class WebSocketRequestHandler(BaseHTTPRequestHandler):
         ws._socket = self.connection
         return ws
 
-    def error(self, code=400, message=None):
-        """
-        error(code=400, message=None) -> None
-
-        Convenience method for indicating an error.
-        The default implementation returns code as the HTTP status code to
-        the client, and adds message (if non-None) as a text/plain UTF-8
-        encoded request body.
-        """
-        self.send_response(code)
-        if message is not None:
-            enc = message.encode('utf-8')
-            self.send_header('Content-Type', 'text/plain; charset=utf-8')
-            self.send_header('Content-Length', len(enc))
-            self.end_headers()
-            self.wfile.write(enc)
-            self.wfile.flush()
-        else:
-            self.send_header('Content-Length', 0)
-            self.end_headers()
+class WebSocketRequestHandler(BaseHTTPRequestHandler, WebSocketMixIn):
+    """
+    An HTTP request handler with support for WebSocket handshakes.
+    """

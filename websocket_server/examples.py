@@ -12,61 +12,40 @@ To run:
 import pkgutil
 
 from .exceptions import ProtocolError
-from .server import WebSocketRequestHandler
-from .quick import run # FileCache not used for now
+from .httpserver import RouteSet, HTTPError # FileCache not used for now
+from .quick import QuickRequestHandler, run
 
 __all__ = ['EchoRequestHandler']
 
-# "Page" to display in case of a 404.
-NOT_FOUND = b'404 Not Found'
+route = RouteSet()
 
-class EchoRequestHandler(WebSocketRequestHandler):
-    """
-    Echo-back WebSocketRequestHandler.
+# Accept WebSocket connections at /echo and bounce received messages back.
+@route('/echo')
+def handle_echo(self):
+    try:
+        conn = self.handshake()
+    except ProtocolError:
+        raise HTTPError(400)
+    # Read frames, and write them back.
+    while 1:
+        try:
+            msg = conn.read_frame()
+            if not msg: break
+            conn.write_frame(msg[0], msg[1])
+        except ProtocolError as exc:
+            self.log_error('%r', exc)
+            break
 
-    Reads a message, and writes it back, until the client closes the
-    connection.
-    """
-    def do_GET(self):
-        """
-        do_GET() -> None
-
-        Example server main loop. See source code for details.
-        """
-        if self.path == '/echo':
-            try:
-                conn = self.handshake()
-            except ProtocolError:
-                return
-            # Read frames, and write them back.
-            while 1:
-                try:
-                    msg = conn.read_frame()
-                    if not msg: break
-                    conn.write_frame(msg[0], msg[1])
-                except ProtocolError as exc:
-                    self.log_error(repr(exc))
-                    break
-        elif self.path == '/':
-            # Display HTML test page.
-            page = pkgutil.get_data(__package__, 'testpage.html')
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.send_header('Content-Length', len(page))
-            self.end_headers()
-            self.wfile.write(page)
-        else:
-            # Minimalistic 404 response.
-            self.send_response(404)
-            self.send_header('Content-Type', 'text/plain; charset=utf-8')
-            self.send_header('Content-Length', len(NOT_FOUND))
-            self.end_headers()
-            self.wfile.write(NOT_FOUND)
+# Serve a static page on the root.
+@route('/')
+def route_root(self):
+    page = pkgutil.get_data(__package__, 'testpage.html').decode('utf-8')
+    self.send_text(200, page, 'text/html; charset=utf-8')
 
 def main():
     """
     Run the example. Uses the run() function from the quick module.
     """
-    run(EchoRequestHandler)
+    run(route.build(QuickRequestHandler))
 
 if __name__ == '__main__': main()
