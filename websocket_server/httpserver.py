@@ -453,6 +453,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
     attribute.
     To conveniently access query strings and POSTed HTML forms, use the
     getvars and postvars attributes.
+    NOTE that these cannot deal with uploads of large files.
     """
 
     def setup(self):
@@ -582,7 +583,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             ctype, pdict = cgi.parse_header(self.headers.get('Content-Type'))
             if ctype == 'multipart/form-data':
                 data = cgi.parse_multipart(self.rfile, pdict)
-                self._postvars = FormData(data.items())
+                self._postvars = FormData.from_dict(data)
             elif ctype == 'application/x-www-form-urlencoded':
                 if 'Content-Length' in self.headers:
                     l = int(self.headers['Content-Length'])

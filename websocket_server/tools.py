@@ -231,12 +231,26 @@ class FormData:
     @classmethod
     def from_qs(cls, qs, **kwds):
         """
-        from_qs(cls, qs, **kwds) -> new instance
+        from_qs(qs, **kwds) -> new instance
 
         Parse a query string and convert the result into a FormData instance.
         Keyword arguments are forwarded to the parse_qsl() function.
         """
         return cls(parse_qsl(qs, **kwds))
+
+    @classmethod
+    def from_dict(cls, src):
+        """
+        from_dict(src) -> new instance
+
+        Convert a mapping where each key is mapped to an iterable of values
+        to a corresponding FormData instance.
+        """
+        def make_pairs():
+            for k, v in src.items():
+                for e in v:
+                    yield (k, e)
+        return cls(make_pairs())
 
     def __init__(self, pairs=()):
         """
