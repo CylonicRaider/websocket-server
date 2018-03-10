@@ -8,13 +8,14 @@ HTTP server support.
 import sys, os, re, time
 import errno
 import socket
+import cgi
 import calendar
 import hashlib
 import threading
 
 from .compat import callable, unicode
 from .cookies import RequestHandlerCookies
-from .tools import format_http_date, parse_http_date
+from .tools import format_http_date, parse_http_date, FormData
 
 try: # Py2K
     from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
@@ -71,10 +72,8 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """
     Multi-threaded HTTP server.
 
-    Necessary for parallel use by many clients.
-    Used by run().
+    Necessary for parallel use by many clients. Used by the quick module.
     """
-    allow_reuse_address = True
 
 class FileCache:
     """
@@ -449,8 +448,11 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
     extra : Extra data as a mapping. The keys must be strings while the
             values' str() representation should be something meaningful.
     To use cookies, override the cookie_descs() method to return a mapping of
-    cookie descriptions. (Not overriding it will work as well, but no cookies
-    will be captured from the request in that case.)
+    cookie descriptions (not overriding it will work as well, but no cookies
+    will be captured from the request in that case), and use the cookies
+    attribute.
+    To conveniently access query strings and POSTed HTML forms, use the
+    getvars and postvars attributes.
     """
 
     def setup(self):
@@ -460,8 +462,10 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         Perform instance initialization.
         """
         BaseHTTPRequestHandler.setup(self)
-        self._cookies = None
         self._log_data = None
+        self._cookies = None
+        self._getvars = None
+        self._postvars = None
 
     def log_request(self, code='-', size='-'):
         """
@@ -551,6 +555,46 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         self._cookies = RequestHandlerCookies(self, self.cookie_descs())
         self._cookies.load()
         return self._cookies
+
+    @property
+    def getvars(self):
+        """
+        getvars -> FormData
+
+        A mapping-like object containing the query string of this request
+        in decomposed form.
+        """
+        if self._getvars is not None: return self._getvars
+        self._getvars = FormData.from_qs(self.path.partition('?')[2])
+        return self._getvars
+
+    @property
+    def postvars(self):
+        """
+        postvars -> FormData
+
+        If the request contains HTML form data as the request body, this
+        contains them in a decomposed form; otherwise, this attribute is
+        an empty FormData instance (as determinable by a truth value test).
+        """
+        if self._postvars is not None: return self._postvars
+        try:
+            ctype, pdict = cgi.parse_header(self.headers.get('Content-Type'))
+            if ctype == 'multipart/form-data':
+                data = cgi.parse_multipart(self.rfile, pdict)
+                self._postvars = FormData(data.items())
+            elif ctype == 'application/x-www-form-urlencoded':
+                if 'Content-Length' in self.headers:
+                    l = int(self.headers['Content-Length'])
+                    data = self.rfile.read(l)
+                else:
+                    data = self.rfile.read()
+                self._postvars = FormData.from_qs(data)
+            else:
+                raise Exception
+        except Exception:
+            self._postvars = FormData()
+        return self._postvars
 
     def send_text(self, code, text, cnttype=None, cookies=False):
         """

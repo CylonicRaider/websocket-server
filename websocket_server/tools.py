@@ -13,8 +13,13 @@ import email.utils
 
 from .compat import bytearray, xrange
 
+try: # Py2K
+    from urlparse import parse_qsl
+except ImportError: # Py3K
+    from urllib.parse import parse_qsl
+
 __all__ = ['mask', 'new_mask', 'parse_paramlist', 'format_http_date',
-           'parse_http_date', 'CaseDict']
+           'parse_http_date', 'CaseDict', 'FormData']
 
 def mask(key, data):
     """
@@ -205,3 +210,142 @@ class CaseDict(collections.MutableMapping):
         lower_key = key.lower()
         del self._data[self._keys[lower_key]]
         del self._keys[lower_key]
+
+class FormData:
+    """
+    FormData(pairs=()) -> new instance
+
+    A read-only mapping-like representation of a set of key-value pairs with
+    potentially non-unique keys. Intended for convenient retrieval of data
+    from HTML form data or query strings.
+
+    pairs is an iterable of (key, value) pairs. The relative order of values
+    (per key) is preserved, as is the order of keys (by first appearance).
+
+    The subscript operator (x[y]) and the get() method are geared towards the
+    simultaneous retrieval of multiple keys, and return a single value if
+    applied to a single key, or a list of values when applied to multiple
+    keys.
+    """
+
+    @classmethod
+    def from_qs(cls, qs, **kwds):
+        """
+        from_qs(cls, qs, **kwds) -> new instance
+
+        Parse a query string and convert the result into a FormData instance.
+        Keyword arguments are forwarded to the parse_qsl() function.
+        """
+        return cls(parse_qsl(qs, **kwds))
+
+    def __init__(self, pairs=()):
+        """
+        __init__(pairs=()) -> None
+
+        Instance initializer; see the class docstring for details.
+        """
+        self.data = collections.OrderedDict()
+        for k, v in pairs:
+            self.data.setdefault(k, []).append(v)
+
+    def __bool__(self):
+        """
+        bool(self) -> bool
+
+        Return whether this instance is nonempty.
+        """
+        return bool(self.data)
+
+    def __nonzero__(self):
+        """
+        bool(self) -> bool
+
+        Return whether this instance is nonempty.
+        """
+        return bool(self.data)
+
+    def __getitem__(self, key):
+        """
+        self[key] -> value
+
+        This is equivalent to self.get_ex(key), or self.get_ex(*key) if
+        key is a tuple or a list.
+        """
+        if isinstance(key, (tuple, list)):
+            return self.get_ex(*key)
+        else:
+            return self.get_ex(key)
+
+    def keys(self):
+        """
+        keys() -> keys
+
+        Return the keys of this mapping. Note that attempting to subscript
+        this instance with each key may still fail (if there are multiple
+        values for it); use get_all() to retrieve all values corresponding
+        to a key reliably.
+        """
+        return self.data.keys()
+
+    def get_all(self, key, **kwds):
+        """
+        get_all(key, [default]) -> list
+
+        Return all values corresponding to key, or default if given, or raise
+        a KeyError.
+        """
+        try:
+            return self.data[key]
+        except KeyError:
+            try:
+                return kwds['default']
+            except KeyError:
+                raise KeyError(key)
+
+    def get_ex(self, *keys, **kwds):
+        """
+        get_ex(*keys, [default], first=False, list=False) -> list or str
+
+        Retrieve values corresponding to keys. If default is not omitted,
+        it is substituted for keys for which there is *no* value. If first is
+        false and there are multiple values for a key, a KeyError is raised;
+        otherwise, the first (or only) value for the key is returned. If
+        list is false and there is only one key, only the value corresponding
+        to it is retrieved; otherwise, a (potentially one-element) list of
+        values is returned.
+        """
+        first, always_list, ret = kwds.get('first'), kwds.get('list'), []
+        for k in keys:
+            v = self.data.get(k, ())
+            if not v:
+                try:
+                    ret.append(kwds['default'])
+                except KeyError:
+                    raise KeyError('No value for %r' % (key,))
+            elif len(v) > 1 and not first:
+                raise KeyError('Too many values for %r' % (key,))
+            else:
+                ret.append(v[0])
+        if len(ret) == 1 and not always_list: ret = ret[0]
+        return ret
+
+    def get(self, *keys, **kwds):
+        """
+        get(*keys, default=None, first=False, list=False) -> list or str
+
+        Retrieve values corresponding to keys, substituting default where
+        there is no value corresponding to a key. Note that here, default is
+        always defined (and itself defaults to None).
+        """
+        kwds.setdefault('default', None)
+        return self.get_ex(*keys, **kwds)
+
+    def items(self):
+        """
+        items() -> iterator
+
+        Iterate over all items in self in approximate insertion order.
+        """
+        for k, v in self.data.items():
+            for e in v:
+                yield (k, e)
