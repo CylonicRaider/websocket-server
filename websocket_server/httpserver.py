@@ -386,6 +386,16 @@ class FileCache:
         res.send(handler)
         return res
 
+    def __call__(self, handler, path=None):
+        """
+        self(handler, path=None) -> bool
+
+        This allows FileCache instances to be used as "callbacks" in
+        RouteSet-s. The arguments are passed on to send(); the return
+        value is adjusted to achieve the desired behavior.
+        """
+        return (not self.send(handler, path))
+
 def callback_producer(callback, base='', guess_type=True):
     """
     callback_producer(callback, base='', guess_type=True) -> function
