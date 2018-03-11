@@ -866,6 +866,9 @@ class RequestHandlerCookies:
     cookie names to URL-s which are used as third parameters to
     Cookie.create() (see there for details). descs also acts as a whitelist;
     cookies not included in it are ignored and (in particular) not sent back.
+    If descs contains a mapping for the None singleton, however, all cookies
+    are allowed, and the description corresponding to None is used as a
+    default.
 
     The mapping protocol is partially implemented; for complex operations,
     create a dict instance.
@@ -935,7 +938,11 @@ class RequestHandlerCookies:
         it. name must be in the descs instance member, which is used to
         initialize the cookie's attributes, or a KeyError occurs.
         """
-        c = Cookie.create(name, value, self.descs[name])
+        try:
+            desc = self.descs[name]
+        except KeyError:
+            desc = self.descs[None]
+        c = Cookie.create(name, value, desc)
         self.cookies[name] = c
         return c
 
