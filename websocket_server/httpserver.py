@@ -17,7 +17,7 @@ import threading
 
 from .compat import callable, unicode
 from .cookies import RequestHandlerCookies
-from .tools import format_http_date, parse_http_date, FormData
+from .tools import format_http_date, parse_http_date, htmlescape, FormData
 
 try: # Py2K
     from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
@@ -33,6 +33,20 @@ WILDCARD_RE = re.compile(r'<([a-zA-Z_][a-zA-Z0-9_]*)>|\\(.)')
 ESCAPE_RE = re.compile(r'[\0-\x1f \\]')
 ESCAPE_INNER_RE = re.compile(r'[\0- \\"]')
 QUOTE_RE = re.compile(r'[\0-\x1f\\"]')
+
+REDIRECT_BODY = '''\
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>Redirect</title>
+  </head>
+  <body>
+    <h1>%(title)s</h1>
+    <p>Please continue <a href="%(url)s">here</a>.</p>
+  </body>
+</html>
+'''
 
 class HTTPError(Exception):
     """
@@ -622,6 +636,16 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             self._postvars = FormData()
         return self._postvars
 
+    def _code_phrase(self, code):
+        """
+        _code_phrase(code) -> str
+
+        Map a HTTP status code to a string matching the following pattern:
+        "<CODE> <PHRASE>", e.g. "200 OK".
+        """
+        phrase, _ = self.responses.get(code, ('???', None))
+        return '%s %s' % (code, phrase)
+
     def send_text(self, code, text, cnttype=None, cookies=False):
         """
         send_text(code, text, cnttype=None, cookies=False) -> None
@@ -660,19 +684,28 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(enctext)
 
-    def send_redirect(self, code, target, cookies=False):
+    def send_redirect(self, code, target, send_text=True, cookies=False):
         """
-        send_redirect(code, target, cookies=False) -> None
+        send_redirect(code, target, send_text=True, cookies=False) -> None
 
         Send a complete mimimal HTTP redirect response. code is the status
-        code to use (e.g. 303), target is the URL to redirect to, cookies
+        code to use (e.g. 303), target is the URL to redirect to, send_text
+        determines whether a minimal HTML response body is sent, cookies
         specifies whether cookies should be sent along with the response.
         """
+        if send_text:
+            body = (REDIRECT_BODY % {
+                'title': htmlescape(self._code_phrase(code)),
+                'url': htmlescape(target)}).encode('utf-8')
+        else:
+            body = b''
         self.send_response(code)
         self.send_header('Location', target)
-        self.send_header('Content-Length', 0)
+        if body: self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', len(body))
         if cookies: self.cookies.send()
         self.end_headers()
+        self.wfile.write(body)
 
 class RoutingRequestHandler(HTTPRequestHandler):
     """

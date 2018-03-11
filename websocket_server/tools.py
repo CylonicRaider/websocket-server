@@ -18,7 +18,7 @@ except ImportError: # Py3K
     from urllib.parse import parse_qsl
 
 __all__ = ['mask', 'new_mask', 'format_http_date', 'parse_http_date',
-           'CaseDict', 'FormData']
+           'htmlescape', 'CaseDict', 'FormData']
 
 def mask(key, data):
     """
@@ -58,6 +58,16 @@ def parse_http_date(s):
     time.
     """
     return calendar.timegm(email.utils.parsedate(s))
+
+def htmlescape(s):
+    """
+    htmlescape(s) -> str
+
+    Escape special characters in s to allow embedding it into HTML text or
+    attributes.
+    """
+    return (s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+             .replace('"', '&quot;').replace("'", '&#39;'))
 
 class CaseDict(collections.MutableMapping):
     """
