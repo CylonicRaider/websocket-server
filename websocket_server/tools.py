@@ -6,7 +6,6 @@ Various tools and utilities.
 """
 
 import os
-import re
 import calendar
 import collections
 import email.utils

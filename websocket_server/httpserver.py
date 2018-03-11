@@ -690,7 +690,7 @@ class RoutingRequestHandler(HTTPRequestHandler):
         "Hack to capture HTTP requests regardless of method."
         if name.startswith('do_'):
             return self.handle_request
-        return HTTPRequestHandler.__getattr__(self, name)
+        raise AttributeError(name)
 
     def setup(self):
         """

@@ -71,4 +71,4 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
         httpd.serve_forever()
     except KeyboardInterrupt:
         # Don't print a noisy stack trace if Ctrl+C'ed.
-        pass
+        sys.stderr.write('\n')
