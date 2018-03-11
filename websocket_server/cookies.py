@@ -11,7 +11,7 @@ standard library are, frankly, utterly insufficient.
 import os, re, time
 
 from . import tools
-from .compat import bytes, unicode
+from .compat import unicode
 
 try:
     from urllib.parse import quote, unquote, urlsplit, urlunsplit, parse_qsl
@@ -74,7 +74,7 @@ def parse_cookie(string):
     """
     ret = {}
     for el in string.split(';'):
-        n, s, v = el.partition('=')
+        n, _, v = el.partition('=')
         ret[n.strip()] = v.strip()
     return ret
 
@@ -524,7 +524,7 @@ class CookieJar:
             try:
                 old = self.cookies[cookie.key]
                 # Force a KeyError unless the attribute is present.
-                old['HttpOnly']
+                old['HttpOnly'] #pylint: disable=W0104
             except KeyError:
                 pass
             else:
@@ -603,6 +603,7 @@ class CookieJar:
         expiring and being a session cookie are mutually exclusive.
         """
         def check(cookie):
+            "Callback to validate a cookie."
             fresh = cookie.is_fresh()
             if expired and not fresh: return False
             if session and fresh is Ellipsis: return False
@@ -618,7 +619,7 @@ class CookieJar:
         either; use cleanup() for that.
         """
         info = parse_url(url)
-        ret = list(filter(lambda c: c._matches(info) and c.is_fresh(), self))
+        ret = [c for c in self if c._matches(info) and c.is_fresh()]
         # We don't (reliably) record the creation time, so the path alone
         # will do.
         ret.sort(key=lambda c: c['Path'], reverse=True)
@@ -763,6 +764,7 @@ class LWPCookieJar(FileCookieJar):
         See FileCookieJar for details.
         """
         def make_attrs(cookie):
+            "Prepare the attribute set of cookie for export."
             ret = tools.CaseDict(cookie)
             if cookie._domain_exact:
                 ret.pop('domain_dot', None)
@@ -777,7 +779,8 @@ class LWPCookieJar(FileCookieJar):
             ret.pop('Max-Age', None)
             ret['Expires'] = cookie._expires
             return ret.items()
-        def format_attr(key, value):
+        def format_attr(cookie, key, value):
+            "Format an individual cookie attribute."
             if key.lower() == 'expires':
                 return time.strftime('expires="%Y-%m-%d %H:%M:%S Z"',
                                      time.gmtime(value))
@@ -786,7 +789,7 @@ class LWPCookieJar(FileCookieJar):
         stream.write('#LWP-Cookies-2.0\n')
         for cookie in filter(predicate, self):
             stream.write('Set-Cookie3: %s\n' % cookie._format(make_attrs,
-                                                              format_attr))
+                lambda k, v: format_attr(cookie, k, v)))
         stream.flush()
 
     def load_from(self, stream):
@@ -796,9 +799,11 @@ class LWPCookieJar(FileCookieJar):
         See FileCookieJar for details.
         """
         def parse_attr(key, value):
+            "Restore the canonical case of attribute keys."
             key = self.ATTR_CASE.get(key, key)
             return Cookie._parse_attr(key, value)
         def make_url(url, attrs):
+            "Undo the attribute and URL modifications done when saving."
             # Assemble URL.
             parts = ['https' if 'Secure' in attrs else 'http',
                      attrs['Domain'], attrs['Path'], '', '']

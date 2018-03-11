@@ -11,9 +11,7 @@ request routing.
 
 import sys, os, re, time
 import errno
-import socket
 import cgi
-import calendar
 import hashlib
 import threading
 
@@ -53,6 +51,8 @@ class HTTPError(Exception):
 
         Instance initializer; see class docstring for details.
         """
+        Exception.__init__(self, 'HTTP code %s%s' % (code,
+            ': %s' % desc if desc else ''))
         self.code = code
         self.desc = desc
 
@@ -725,7 +725,7 @@ class RoutingRequestHandler(HTTPRequestHandler):
         of the code (e.g., "Bad Request"), and <MESSAGE> is message (e.g.,
         "Missing required header field.").
         """
-        phrase, explanation = self.responses.get(code, ('???', None))
+        phrase, _ = self.responses.get(code, ('???', None))
         self.send_text(code, (str(code), ' ', phrase,
                               '\n' if message else '', message))
 

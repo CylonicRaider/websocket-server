@@ -17,9 +17,9 @@ from .quick import RoutingWebSocketRequestHandler, run
 
 route = RouteSet()
 
-# Accept WebSocket connections at /echo and bounce received messages back.
 @route('/echo')
 def handle_echo(self):
+    "Accept a WebSocket connection and bounce received messages back."
     try:
         conn = self.handshake()
     except ProtocolError:
@@ -34,9 +34,9 @@ def handle_echo(self):
             self.log_error('%r', exc)
             break
 
-# Serve a static page on the root.
 @route('/')
 def route_root(self):
+    "Serve a static page at the root."
     page = pkgutil.get_data(__package__, 'testpage.html')
     self.send_text(200, page, 'text/html; charset=utf-8')
 

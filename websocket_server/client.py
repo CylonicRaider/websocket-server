@@ -8,11 +8,9 @@ Although this is supposed to be a "server" module, client-side support is
 quite a low-hanging fruit.
 """
 
-import os
 import threading
 import base64
 
-from .exceptions import ProtocolError
 from .wsfile import client_handshake, wrap
 
 try:
@@ -126,7 +124,7 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
             else:
                 raise ValueError('Bad URL scheme.')
             # Initiate handshake.
-            validate = client_handshake(headers)
+            validate = client_handshake(headers, protos)
             # Cookies.
             if cookies is not None:
                 v = cookies.format_cookie(url)
@@ -140,7 +138,7 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
             # Clean up old file, if any.
             try:
                 wrfile.close()
-            except:
+            except IOError:
                 pass
             # Grab socket reference; keep it alive for us.
             sock = conn.sock
@@ -202,6 +200,6 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
             if not f: continue
             try:
                 f.close()
-            except:
+            except IOError:
                 pass
         raise

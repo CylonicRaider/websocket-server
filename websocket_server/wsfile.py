@@ -20,7 +20,8 @@ from collections import namedtuple
 
 from . import constants
 from .compat import bytearray, bytes, tobytes, unicode
-from .exceptions import *
+from .exceptions import ProtocolError, InvalidDataError
+from .exceptions import ConnectionClosedError
 from .tools import mask, new_mask
 
 __all__ = ['client_handshake', 'WebSocketFile', 'wrap']
@@ -94,6 +95,7 @@ def client_handshake(headers, protos=None, makekey=None):
          as a keyword argument.
     """
     def check_response(respheaders):
+        "Ensure the given HTTP response headers are a valid WS handshake."
         # Verify key and other fields.
         if respheaders.get('Sec-WebSocket-Accept') != process_key(key):
             raise ProtocolError('Invalid response key')
@@ -131,7 +133,9 @@ def server_handshake(headers, protos=None):
       the only argument and returning a subprotocol name or None.
     The return value is a mapping of headers to be included in the response.
     """
-    def error(msg): raise ProtocolError('Invalid handshake: %s' % msg)
+    def error(msg):
+        "Convenience function to raise ProtocolError-s."
+        raise ProtocolError('Invalid handshake: %s' % msg)
     # The standard requires a Host header... why not...
     if 'Host' not in headers:
         error('Missing Host header')
@@ -242,15 +246,15 @@ class WebSocketFile(object):
         return cls(rdfile, wrfile, server_side)
 
     @classmethod
-    def from_socket(cls, socket, server_side=False):
+    def from_socket(cls, sock, server_side=False):
         """
-        from_socket(cls, socket, server_side=False) -> WebSocketFile
+        from_socket(cls, sock, server_side=False) -> WebSocketFile
 
         Wrap a socket in a WebSocketFile. Uses the makefile() method to
         obtain the file objects internally used.
         """
-        ret = cls.from_file(socket.makefile('rwb'), server_side)
-        ret._socket = socket
+        ret = cls.from_file(sock.makefile('rwb'), server_side)
+        ret._socket = sock
         return ret
 
     @classmethod
@@ -578,8 +582,8 @@ class WebSocketFile(object):
             return False
         return True
 
-    # Used internally.
     def _error(self, message):
+        "Used internally."
         self.error(message)
         # Assure execution does not continue.
         raise RuntimeError('error() did return')
