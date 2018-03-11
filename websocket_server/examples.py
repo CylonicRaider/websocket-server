@@ -13,9 +13,7 @@ import pkgutil
 
 from .exceptions import ProtocolError
 from .httpserver import RouteSet, HTTPError # FileCache not used for now
-from .quick import QuickRequestHandler, run
-
-__all__ = ['EchoRequestHandler']
+from .quick import RoutingWebSocketRequestHandler, run
 
 route = RouteSet()
 
@@ -46,6 +44,6 @@ def main():
     """
     Run the example. Uses the run() function from the quick module.
     """
-    run(route.build(QuickRequestHandler))
+    run(route.build(RoutingWebSocketRequestHandler))
 
 if __name__ == '__main__': main()

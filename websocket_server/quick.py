@@ -11,9 +11,9 @@ import optparse
 from .server import WebSocketMixIn
 from .httpserver import ThreadingHTTPServer, RoutingRequestHandler
 
-__all__ = ['QuickRequestHandler', 'run']
+__all__ = ['RoutingWebSocketRequestHandler', 'run']
 
-class QuickRequestHandler(RoutingRequestHandler, WebSocketMixIn):
+class RoutingWebSocketRequestHandler(RoutingRequestHandler, WebSocketMixIn):
     """
     An HTTP request handler combining all the package's functionality.
     """

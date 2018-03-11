@@ -123,7 +123,7 @@ def format_http_date(t):
     Return a string represententing the given UNIX timestamp suitable for
     inclusion into HTTP headers.
     """
-    return email.utils.formatdate(ts, usegmt=True)
+    return email.utils.formatdate(t, usegmt=True)
 
 def parse_http_date(s):
     """
@@ -132,7 +132,7 @@ def parse_http_date(s):
     Parse a timestamp as it occurs in HTTP and return the corresponding UNIX
     time.
     """
-    return calendar.timegm(email.utils.parsedate(date))
+    return calendar.timegm(email.utils.parsedate(s))
 
 class CaseDict(collections.MutableMapping):
     """
@@ -335,9 +335,9 @@ class FormData:
                 try:
                     ret.append(kwds['default'])
                 except KeyError:
-                    raise KeyError('No value for %r' % (key,))
+                    raise KeyError('No value for %r' % (k,))
             elif len(v) > 1 and not first:
-                raise KeyError('Too many values for %r' % (key,))
+                raise KeyError('Too many values for %r' % (k,))
             else:
                 ret.append(v[0])
         if len(ret) == 1 and not always_list: ret = ret[0]

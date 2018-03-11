@@ -8,9 +8,7 @@ Cookie management utilities.
 standard library are, frankly, utterly insufficient.
 """
 
-import os
-import re
-import time
+import os, re, time
 
 from . import tools
 from .compat import bytes, unicode
@@ -23,6 +21,8 @@ except ImportError:
 
 __all__ = ['Cookie', 'CookieJar', 'FileCookieJar', 'LWPCookieJar',
            'CookieLoadError', 'parse_cookie', 'format_set_cookie']
+
+COOKIE_HEADER = re.compile(r'(?i)Cookie\s*:\s+')
 
 SECURE_SCHEMES = ['https', 'wss']
 HTTP_SCHEMES = ['http', 'https', 'ws', 'wss']
@@ -938,7 +938,6 @@ class RequestHandlerCookies:
 
         Submit the cookies stored in this instance to the HTTP client.
         """
-        if gc: self.gc()
         for c in self.cookies.values():
             self.handler.send_header('Set-Cookie', c.format('set'))
 

@@ -776,7 +776,7 @@ class RoutingRequestHandler(HTTPRequestHandler):
                 func, kwds = res
                 res = (not func(self, **kwds))
             if not res:
-                self.handle_default()
+                self.handle_fallback()
         except HTTPError as e:
             self.send_code(e.code, e.desc)
         except Exception as e:
