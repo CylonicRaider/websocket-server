@@ -115,6 +115,16 @@ class Cookie:
 
     Make sure to choose only appropriate names/values; Cookie does not
     empoly any means of automatic escaping.
+
+    Instance members are:
+    name   : The name of the cookie.
+    value  : The value of the cookie.
+    url    : The URL the cookie is associated to.
+    key    : A sorting and comparison key. Read-only.
+    attrs  : The attributes of the cookie.
+    relaxed: Whether certain security features (i.e. the Secure and
+             HttpOnly cookie attributes) should be ignored. Use with
+             caution.
     """
 
     @classmethod
@@ -461,6 +471,13 @@ class CookieJar:
     storage, management, and retrieval of cookies, providing a
     dedicated interface for that.
 
+    Instance attributes are:
+    cookies: The underlying mapping of cookies. Prefer the methods of
+             this class to manipulating this directly.
+    relaxed: Whether certain security features should be ignored. The
+             value of this attribute is passed on to Cookie instances
+             created by this class. Use with caution.
+
     NOTE that modifying the name, path, or domain of a cookie stored
          in a CookieJar leads to erratic behavior.
     """
@@ -666,6 +683,9 @@ class FileCookieJar(CookieJar):
     after creating it (*not* when an already-existing file is opened).
     The class does not define a particular serialization format; this
     is delegated to subclasses.
+
+    Instance attributes (aside from interited ones) are:
+    file: The file object underlying this instance.
     """
 
     def __init__(self, file=None, mode=None):
@@ -849,6 +869,12 @@ class RequestHandlerCookies:
 
     The mapping protocol is partially implemented; for complex operations,
     create a dict instance.
+
+    Normally, you do not need to create instances of this class; the
+    HTTPRequestHandler class does so automatically.
+
+    The "handler" and "descs" attributes hold the values of the corresponding
+    constructor arguments.
     """
 
     def __init__(self, handler, descs):

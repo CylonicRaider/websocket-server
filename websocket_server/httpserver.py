@@ -43,6 +43,9 @@ class HTTPError(Exception):
     transmit; desc is an optional string giving detail on the exact reason
     of the error; see RoutingRequestHandler.send_code() for the layout of the
     response body.
+
+    The "code" and "desc" attributes hold the values of the corresponding
+    constructor arguments.
     """
 
     def __init__(self, code, desc=None):
@@ -682,6 +685,9 @@ class RoutingRequestHandler(HTTPRequestHandler):
     This class enables HTTPRequestHandler's advanced logging by default; the
     "extra" key is initialized to an empty dictionary, which can be used
     immediately.
+
+    The "routes" attribute should be set on subclasses or instances of this,
+    or all HTTP requests will be responded to with 500's.
     """
 
     routes = None
@@ -829,6 +835,10 @@ class RouteSet:
     value, a callback communicates that it did *not* handle the request, and
     fallback behavior should be applied (in particular, a return value of
     None inhibits the fallback behavior).
+
+    The "fixroutes", "dynroutes", and "fbfunc" instance attributes contain
+    the values of the corresponding constructor parameters, and are modified
+    in-place by add() etc.
 
     Instances of this class can be used as decorators, as illustrated below:
     >>> route = RouteSet()
