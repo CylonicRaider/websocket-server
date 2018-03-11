@@ -1,14 +1,15 @@
 # websocket-server
 
-WebSocket library for Python, with emphasis on code quality and simple static file integration.
+WebSocket/HTTP server/client library for Python.
 
 ## Description
 
-This is a little stand-alone library for WebSocket servers.
-It integrates neatly with the standard library, providing easily set-up
-servers for both WebSockets and other content. It is intended for
-small-scale usages, where installing a proper framework would require
-too much work.
+This is a small stand-alone library for WebSocket servers/clients and generic
+HTTP servers. It extends Python's HTTP server framework, providing -- aside
+from WebSocket functionality -- convenient use of cookies, query string
+parameters, POSTed HTML forms, request routing, and richer HTTP logs than
+the standard library provides. WebSocket client functionality is provided as
+well.
 
 ## Installation
 

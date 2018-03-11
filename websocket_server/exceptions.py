@@ -1,4 +1,4 @@
-# websocket_server -- WebSocket server library
+# websocket_server -- WebSocket/HTTP server/client library
 # https://github.com/CylonicRaider/websocket-server
 
 """
@@ -13,7 +13,6 @@ class WebSocketError(Exception):
     """
     Base class for all exceptions.
     """
-    pass
 
 class ProtocolError(WebSocketError):
     """
@@ -21,6 +20,7 @@ class ProtocolError(WebSocketError):
 
     The "code" attribute contains the error code, or None.
     """
+
     def __init__(self, message, code=None):
         """
         __init__(message, code=None) -> None
@@ -36,10 +36,8 @@ class InvalidDataError(ProtocolError, ValueError):
     """
     Invalid data have been encountered.
     """
-    pass
 
 class ConnectionClosedError(WebSocketError):
     """
     Raised if trying to write a message after the connection closed.
     """
-    pass

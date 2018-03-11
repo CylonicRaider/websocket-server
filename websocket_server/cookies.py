@@ -1,11 +1,11 @@
-# websocket_server -- WebSocket server library
+# websocket_server -- WebSocket/HTTP server/client library
 # https://github.com/CylonicRaider/websocket-server
 
 """
 Cookie management utilities.
 
-(Mostly) compliant to RFC 6265. The alternatives present in the
-standard library are, frankly, utterly insufficient.
+(Mostly) compliant to RFC 6265. The alternatives present in the standard
+library are too tightly coupled to be used outside it.
 """
 
 import os, re, time
@@ -13,19 +13,19 @@ import os, re, time
 from . import tools
 from .compat import unicode
 
-try:
-    from urllib.parse import quote, unquote, urlsplit, urlunsplit, parse_qsl
-except ImportError:
+try: # Py2K
     from urllib import quote, unquote
     from urlparse import urlsplit, urlunsplit, parse_qsl
+except ImportError: # Py3K
+    from urllib.parse import quote, unquote, urlsplit, urlunsplit, parse_qsl
 
 __all__ = ['Cookie', 'CookieJar', 'FileCookieJar', 'LWPCookieJar',
            'CookieLoadError', 'parse_cookie', 'format_set_cookie']
 
-COOKIE_HEADER = re.compile(r'(?i)Cookie\s*:\s+')
-
 SECURE_SCHEMES = ['https', 'wss']
 HTTP_SCHEMES = ['http', 'https', 'ws', 'wss']
+
+COOKIE_HEADER = re.compile(r'(?i)Cookie\s*:\s+')
 
 def domains_match(base, probe):
     """
@@ -92,7 +92,6 @@ class CookieLoadError(Exception):
     """
     Raised if trying to load cookies from a badly formatted file.
     """
-    pass
 
 class Cookie:
     """
@@ -538,7 +537,7 @@ class CookieJar:
         """
         remove(cookie) -> bool
 
-        Remove the given cookie (or an equivalent) one from self.
+        Remove the given cookie (or an equivalent one) from self.
         Returns whether an equivalent cookie was actually present.
         """
         try:
@@ -603,7 +602,7 @@ class CookieJar:
         expiring and being a session cookie are mutually exclusive.
         """
         def check(cookie):
-            "Callback to validate a cookie."
+            "Determine whether the given cookie should *not* be evicted."
             fresh = cookie.is_fresh()
             if expired and not fresh: return False
             if session and fresh is Ellipsis: return False
@@ -839,10 +838,10 @@ class RequestHandlerCookies:
     This class automates the gathering and sending of cookie headers in
     BaseHTTPRequestHandler instances. handler is the request handler object
     to work with. descs is a mapping of "cookie descriptions" that are used to
-    reconstruct attributes of cookies received from the client; cookie names
-    are mapped to URL-s which are used as third parameters to Cookie.create()
-    (see there for details). descs also acts as a whitelist; cookies not
-    included in it are ignored and (in particular) not sent back.
+    reconstruct attributes of cookies received from the client; descs maps
+    cookie names to URL-s which are used as third parameters to
+    Cookie.create() (see there for details). descs also acts as a whitelist;
+    cookies not included in it are ignored and (in particular) not sent back.
 
     The mapping protocol is partially implemented; for complex operations,
     create a dict instance.
@@ -933,7 +932,7 @@ class RequestHandlerCookies:
             pairs.update(parse_cookie(COOKIE_HEADER.sub('', h)))
         for k, v in pairs.items():
             try:
-                self.cookies[k] = Cookie.create(k, v, self.descs[k])
+                self.make(k, v)
             except KeyError:
                 pass
 

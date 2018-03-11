@@ -1,4 +1,4 @@
-# websocket_server -- WebSocket server library
+# websocket_server -- WebSocket/HTTP server/client library
 # https://github.com/CylonicRaider/websocket-server
 
 """
@@ -505,7 +505,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         """
         send_header(name, value) -> None
 
-        Send a HTTP header. This method forwards to the parent class, and
+        Send an HTTP header. This method forwards to the parent class, and
         also captures Content-Length headers if advanced logging is enabled.
         """
         BaseHTTPRequestHandler.send_header(self, name, value)
@@ -690,7 +690,7 @@ class RoutingRequestHandler(HTTPRequestHandler):
         "Hack to capture HTTP requests regardless of method."
         if name.startswith('do_'):
             return self.handle_request
-        raise AttributeError(name)
+        return HTTPRequestHandler.__getattr__(self, name)
 
     def setup(self):
         """
@@ -715,7 +715,7 @@ class RoutingRequestHandler(HTTPRequestHandler):
         """
         send_code(code, message=None) -> None
 
-        Send a resposne with code as the status code and the following
+        Send a response with code as the status code and the following
         plain-text body:
 
             <CODE> <PHRASE>
@@ -768,7 +768,9 @@ class RoutingRequestHandler(HTTPRequestHandler):
         handle_request() -> None
 
         Actually handle a request by matching it to a route and invoking the
-        corresponding callback; see RouteSet for details.
+        corresponding callback; see RouteSet for details. HTTPError
+        exceptions are caught and processed using send_code(). Other
+        exceptions are passed to the handle_exception() method.
         """
         try:
             res = self.routes.get(self.command, self.path)
@@ -880,8 +882,8 @@ class RouteSet:
         add(func, path, method='GET') -> None
 
         Add a new route to the route set. func is the callback to invoke (see
-        the class docstring for semantics); path is the path template to
-        match (see below); method is the request method to match (note that
+        the class docstring for details); path is the path template to match
+        (see below); method is the request method to match (note that
         matching is case-sensitive).
 
         path may contain "wildcards" following the "<NAME>" pattern (where
@@ -918,7 +920,7 @@ class RouteSet:
         """
         fallback(func) -> None
 
-        Make func the fallback function in this route set.
+        Make func the fallback function of this route set.
         """
         self.fbfunc = func
         return func
@@ -928,7 +930,7 @@ class RouteSet:
         get(method, path) -> (function, dict) or None
 
         Retrieve a callback to be invoked to handle a request to path and
-        keyword arguments to pass to it, or None if no route matches path.
+        keyword arguments to pass to it, or None if no route matches.
         """
         path = path.partition('?')[0]
         try:
@@ -964,7 +966,7 @@ class RouteSet:
         This is a convenience wrapper around add() that allows the use of
         this instance as a decorator. The returned function takes a single
         argument, and passes it, followed by all arguments to this function,
-        on to add().
+        on to add(), and returns the function it was passed.
         """
         def callback(func):
             self.add(func, *args, **kwds)

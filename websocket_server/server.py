@@ -1,8 +1,8 @@
-# websocket_server -- WebSocket server library
+# websocket_server -- WebSocket/HTTP server/client library
 # https://github.com/CylonicRaider/websocket-server
 
 """
-Server implementation.
+WebSocket server implementation.
 
 Relies on the standard library's HTTP server framework for the HTTP serving
 part; is also compatible with the websocket_server.httpserver module.
@@ -21,12 +21,11 @@ class WebSocketMixIn:
     """
     Mixin class for BaseHTTPRequestHandler implementing WebSocket handshakes.
 
-    Use the handshake() method in do_*() method to actually initiate a
-    WebSocket connections; the handler method must not return until the
-    session ends.
-    This class does not include any mix-ins, however, you are strongly
-    advised to use ThreadingMixIn (or ForkingMixIn), as otherwise the
-    server will only accept one WebSocket session at a time.
+    Use the handshake() method in a do_*() method to actually initiate a
+    WebSocket connection; do not return from the handler method until the
+    WebSocket session ends.
+    You are advised to use the ThreadingMixIn in your server class to allow
+    handling multiple WebSocket connections concurrently.
     """
 
     def handshake(self):

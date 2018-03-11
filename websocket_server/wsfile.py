@@ -1,4 +1,4 @@
-# websocket_server -- WebSocket server library
+# websocket_server -- WebSocket/HTTP server/client library
 # https://github.com/CylonicRaider/websocket-server
 
 """
@@ -84,7 +84,7 @@ def client_handshake(headers, protos=None, makekey=None):
     NOTE that the value of protos is not validated.
     makekey, if not None, is a function that returns a byte string of length
     16 that is used as the base of the Sec-WebSocket-Key header. If makekey
-    *is* None, os.urandom() is used.
+    is None, os.urandom() is used.
     The return value is a function that takes the response headers (in the
     same format as headers) as the only parameter and raises a ProtocolError
     if the handshake is not successful. If the handshake *is* successful, the
@@ -123,7 +123,7 @@ def server_handshake(headers, protos=None):
 
     Perform the server-side part of a WebSocket handshake.
     headers is a maping from header names to header values (both Unicode
-    strings) which is validated.
+    strings), which is validated.
     protos is one of:
     - None to indicate no subprotocols,
     - A sequence or whitespace-delimited string of names of accepted
@@ -133,9 +133,7 @@ def server_handshake(headers, protos=None):
       the only argument and returning a subprotocol name or None.
     The return value is a mapping of headers to be included in the response.
     """
-    def error(msg):
-        "Convenience function to raise ProtocolError-s."
-        raise ProtocolError('Invalid handshake: %s' % msg)
+    def error(msg): raise ProtocolError('Invalid handshake: %s' % msg)
     # The standard requires a Host header... why not...
     if 'Host' not in headers:
         error('Missing Host header')

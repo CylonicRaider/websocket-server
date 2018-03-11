@@ -1,11 +1,8 @@
-# websocket_server -- WebSocket server library
+# websocket_server -- WebSocket/HTTP server/client library
 # https://github.com/CylonicRaider/websocket-server
 
 """
-Client-side support.
-
-Although this is supposed to be a "server" module, client-side support is
-quite a low-hanging fruit.
+WebSocket client implementation.
 """
 
 import threading
@@ -13,13 +10,11 @@ import base64
 
 from .wsfile import client_handshake, wrap
 
-try:
+try: # Py2K
     import httplib
-except ImportError:
-    import http.client as httplib
-try:
     from urlparse import urlsplit, urlunsplit, urljoin
-except ImportError:
+except ImportError: # Py3K
+    import http.client as httplib
     from urllib.parse import urlsplit, urlunsplit, urljoin
 
 __all__ = ['connect']
@@ -40,7 +35,7 @@ class TweakHTTPResponse(httplib.HTTPResponse):
 
     def begin(self):
         """
-        Override the behavior of automatically closing 101 responses
+        Override the behavior of automatically closing 101 responses.
 
         Those are *meant* to be used further.
         """
@@ -50,17 +45,17 @@ class TweakHTTPResponse(httplib.HTTPResponse):
             self.will_close = True
 
     def read(self, amount=None):
-        "Work around race condition between reading and closing"
+        "Work around race condition between reading and closing."
         with self._lock:
             return httplib.HTTPResponse.read(self, amount)
 
     def readinto(self, buf):
-        "Work around race condition between reading and closing"
+        "Work around race condition between reading and closing."
         with self._lock:
             return httplib.HTTPResponse.readinto(self, buf)
 
     def close(self):
-        "Work around race condition between reading and closing"
+        "Work around race condition between reading and closing."
         with self._lock:
             return httplib.HTTPResponse.close(self)
 
@@ -77,8 +72,8 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
     protos (a list of strings, a string, or None) can be used to specify
     subprotocols.
     headers can be None or a mapping of additional request headers to be
-    added (note that it is expected to implement the mutable mapping
-    protocol and will be modified).
+    added (NOTE that it is expected to implement the mutable mapping
+    protocol and might be modified in-place).
     cookies can be a CookieJar instance from the websocket_server.cookies
     module, or anything that has compatible process_set_cookie() and
     format_cookie() methods; the latters are used to submit cookies with

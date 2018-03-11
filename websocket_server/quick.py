@@ -1,4 +1,4 @@
-# websocket_server -- WebSocket server library
+# websocket_server -- WebSocket/HTTP server/client library
 # https://github.com/CylonicRaider/websocket-server
 
 """
@@ -51,7 +51,7 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
     p.add_option('-s', '--host', dest='host', default='',
                  help='Specify the network interface to bind to.',
                  metavar='IP')
-    # Call preparation call-back
+    # Call preparation callback
     if prepare: prepare(p)
     # Actually parse arguments.
     options, arguments = p.parse_args()

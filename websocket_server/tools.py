@@ -1,4 +1,4 @@
-# websocket_server -- WebSocket server library
+# websocket_server -- WebSocket/HTTP server/client library
 # https://github.com/CylonicRaider/websocket-server
 
 """
@@ -138,7 +138,7 @@ class CaseDict(collections.MutableMapping):
     """
     CaseDict(source=(), **update) -> new instance
 
-    A mapping with case-insensitive (string) keys (the name is
+    A mapping with case-insensitive (string) keys (the class name is
     abbreviated from CaseInsensitiveDict). See the dict constructor for
     the meanings of the arguments.
     """
@@ -225,7 +225,7 @@ class FormData:
     The subscript operator (x[y]) and the get() method are geared towards the
     simultaneous retrieval of multiple keys, and return a single value if
     applied to a single key, or a list of values when applied to multiple
-    keys.
+    keys. See their docstrings (and get_ex()) for more details.
     """
 
     @classmethod

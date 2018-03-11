@@ -1,8 +1,8 @@
-# websocket_server -- WebSocket server library
+# websocket_server -- WebSocket/HTTP server/client library
 # https://github.com/CylonicRaider/websocket-server
 
 """
-Py2K/Py3K compatibility utilities.
+Py2K/Py3K compatibility definitions.
 """
 
 try: # Py2K
@@ -33,8 +33,10 @@ except NameError:
 import sys as _sys
 if _sys.version_info[0] <= 2:
     def tobytes(s):
+        "Convert a string to a bytes object."
         return s
 else:
     def tobytes(s):
+        "Convert a string to a bytes object."
         return bytes(s, 'utf-8')
 del _sys
