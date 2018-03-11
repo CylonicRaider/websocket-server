@@ -36,12 +36,16 @@ def domains_match(base, probe):
     """
     if probe == base:
         return True
-    elif not probe.endswith(base) or not probe[:-len(base)].endswith('.'):
+    prefix = probe[:-len(base)]
+    if not probe.endswith(base) or (prefix and not prefix.endswith('.')):
+        # probe must be a suffix of base, and be separated by a dot.
         return False
     elif probe.replace('.', '').isdigit() or ':' in probe:
-        # Crude heuristic to match IP addresses.
+        # probe must not be an IP address; applying a crude heuristic.
         return False
     else:
+        # If the above two ("negative") conditions do not match, this case
+        # is invoked.
         return True
 
 def paths_match(base, probe):
