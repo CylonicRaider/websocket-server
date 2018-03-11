@@ -3,8 +3,8 @@
 from distutils.core import setup
 
 setup(name='websocket_server',
-      version='1.0',
-      description='Stand-alone WebSocket server library',
+      version='2.0',
+      description='Stand-alone WebSocket/HTTP server/client library',
       author='@CylonicRaider',
       url='https://github.com/CylonicRaider/websocket-server',
       packages=['websocket_server'],

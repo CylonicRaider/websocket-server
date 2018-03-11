@@ -16,7 +16,7 @@ see the wsfile, server, httpserver, and client modules; also see the quick
 module for further convenience functions.
 """
 
-__version__ = '1.0'
+__version__ = '2.0'
 
 # Auxiliary modules
 from . import compat, constants, exceptions, tools
