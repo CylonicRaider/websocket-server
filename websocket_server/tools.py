@@ -9,6 +9,7 @@ import os
 import calendar
 import collections
 import email.utils
+import xml.sax.saxutils
 
 from .compat import bytearray, xrange
 
@@ -66,8 +67,7 @@ def htmlescape(s):
     Escape special characters in s to allow embedding it into HTML text or
     attributes.
     """
-    return (s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-             .replace('"', '&quot;').replace("'", '&#39;'))
+    return xml.sax.saxutils.escape(s, {'"': '&quot;', "'": '&#39;'})
 
 class CaseDict(collections.MutableMapping):
     """
