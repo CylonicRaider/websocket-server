@@ -133,7 +133,7 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
             # Clean up old file, if any.
             try:
                 wrfile.close()
-            except IOError:
+            except Exception:
                 pass
             # Grab socket reference; keep it alive for us.
             sock = conn.sock
