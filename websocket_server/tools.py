@@ -5,7 +5,7 @@
 Various tools and utilities.
 """
 
-import os
+import os, re
 import calendar
 import collections
 import email.utils
@@ -20,6 +20,10 @@ except ImportError: # Py3K
 
 __all__ = ['mask', 'new_mask', 'format_http_date', 'parse_http_date',
            'htmlescape', 'CaseDict', 'FormData']
+
+# Liberal recognition of the ISO 8601 date-time format used by cookies.py.
+ISO_DATETIME_RE = re.compile(r'^ (\d+) - (\d+) - (\d+) (?:T )?'
+    r'(\d+) : (\d+) : (\d+) Z? $'.replace(r' ', r'\s*'))
 
 def mask(key, data):
     """
@@ -58,7 +62,13 @@ def parse_http_date(s):
     Parse a timestamp as it occurs in HTTP and return the corresponding UNIX
     time.
     """
-    return calendar.timegm(email.utils.parsedate(s))
+    fields = email.utils.parsedate(s)
+    if fields is None:
+        m = ISO_DATETIME_RE.match(s)
+        if not m:
+            raise ValueError('Unrecognized date-time string: %r' % (s,))
+        fields = [int(n, 10) for n in m.groups()] + [0, 0, -1]
+    return calendar.timegm(fields)
 
 def htmlescape(s):
     """
