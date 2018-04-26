@@ -787,6 +787,17 @@ class RoutingRequestHandler(HTTPRequestHandler):
         "Send an Internal Server Error response; see send_code()."
         self.send_code(500, text)
 
+    def send_cache(self, entry):
+        """
+        send_cache(entry) -> None
+
+        Send an entry of a FileCache, or a 404 page is entry is None.
+        """
+        if entry is not None:
+            entry.send(self)
+        else:
+            self.send_404()
+
     def send_error(self, code, message=None):
         """
         send_error(code, message=None) -> None
