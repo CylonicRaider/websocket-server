@@ -98,7 +98,7 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 class FileCache:
     """
-    FileCache(webroot, cnttypes=None, filter=None, **config)
+    FileCache(webroot, cnttypes=None, **config)
         -> new instance
 
     Helper for caching and delivering static files.
@@ -791,9 +791,11 @@ class RoutingRequestHandler(HTTPRequestHandler):
         """
         send_cache(entry) -> None
 
-        Send an entry of a FileCache, or a 404 page is entry is None.
+        Send an entry of a FileCache, or a 404 page is entry is None or the
+        Ellipsis singleton (indicating absent file and present directory,
+        respectively).
         """
-        if entry is not None:
+        if entry is not None and entry is not Ellipsis:
             entry.send(self)
         else:
             self.send_404()
