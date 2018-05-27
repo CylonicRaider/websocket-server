@@ -787,18 +787,29 @@ class RoutingRequestHandler(HTTPRequestHandler):
         "Send an Internal Server Error response; see send_code()."
         self.send_code(500, text)
 
-    def send_cache(self, entry):
+    def send_cache(self, obj):
         """
-        send_cache(entry) -> None
+        send_cache(obj) -> None
 
-        Send an entry of a FileCache, or a 404 page is entry is None or the
-        Ellipsis singleton (indicating absent file and present directory,
-        respectively).
+        Convenience method for sending FileCache entries or a 404 page if that
+        fails. obj can be one of the following:
+        A FileCache      : The object's send() method is invoked; if it was
+                           unsuccessful (i.e. None was returned), sends a 404
+                           page.
+        A FileCache.Entry: The object's send() method is invoked.
+        None or Ellipsis : A 404 page is sent.
+        Thus, both a FileCache instance itself and a return value of its
+        get() method can be passed without further checks.
         """
-        if entry is not None and entry is not Ellipsis:
-            entry.send(self)
-        else:
+        if obj in (None, Ellipsis):
             self.send_404()
+        elif isinstance(obj, FileCache):
+            if not obj.send(self):
+                self.send_404()
+        elif isinstance(obj, FileCache.Entry):
+            obj.send(self)
+        else:
+            raise TypeError('Unrecognized argument type')
 
     def send_error(self, code, message=None):
         """
