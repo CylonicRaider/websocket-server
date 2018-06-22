@@ -954,19 +954,23 @@ class RequestHandlerCookies:
         handler's HTTP request. Cookies whose names are not in the descs
         member are ignored.
         """
-        hdrlines = self.handler.headers.getallmatchingheaders('Cookie')
-        # Assemble folded lines. ._.
-        headers = []
-        for line in hdrlines:
-            if line[:1].isspace():
-                # A continuation line in the very beginning should not
-                # happen.
-                headers[-1] += line
-            else:
-                headers.append(line)
+        try: # Py3K
+            values = self.handler.headers.get_all('Cookie', ())
+        except AttributeError: # Py2K
+            hdrlines = self.handler.headers.getallmatchingheaders('Cookie')
+            # Assemble folded lines. ._.
+            headers = []
+            for line in hdrlines:
+                if line[:1].isspace():
+                    # A continuation line in the very beginning should not
+                    # happen.
+                    headers[-1] += line
+                else:
+                    headers.append(line)
+            values = [COOKIE_HEADER.sub('', h) for h in headers]
         pairs = {}
-        for h in headers:
-            pairs.update(parse_cookie(COOKIE_HEADER.sub('', h)))
+        for v in values:
+            pairs.update(parse_cookie(v))
         for k, v in pairs.items():
             try:
                 self.make(k, v)

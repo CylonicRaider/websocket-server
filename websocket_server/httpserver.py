@@ -621,14 +621,22 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         try:
             ctype, pdict = cgi.parse_header(self.headers.get('Content-Type'))
             if ctype == 'multipart/form-data':
-                data = cgi.parse_multipart(self.rfile, pdict)
-                self._postvars = FormData.from_dict(data)
+                data = cgi.parse_multipart(self.rfile, {'boundary':
+                    pdict['boundary'].encode('ascii')})
+                decdata = {}
+                for k, v in data.items():
+                    try:
+                        decdata[k] = [e.decode('utf-8') for e in v]
+                    except UnicodeDecodeError:
+                        pass
+                self._postvars = FormData.from_dict(decdata)
             elif ctype == 'application/x-www-form-urlencoded':
                 if 'Content-Length' in self.headers:
                     l = int(self.headers['Content-Length'])
                     data = self.rfile.read(l)
                 else:
                     data = self.rfile.read()
+                data = data.decode('utf-8')
                 self._postvars = FormData.from_qs(data)
             else:
                 raise Exception
