@@ -96,7 +96,7 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     Necessary for parallel use by many clients. Used by the quick module.
     """
 
-class FileCache:
+class FileCache(object):
     """
     FileCache(webroot, cnttypes=None, **config)
         -> new instance
@@ -175,7 +175,7 @@ class FileCache:
                 '.js': 'application/javascript',
                 '.ico': 'image/vnd.microsoft.icon'}
 
-    class Entry:
+    class Entry(object):
         """
         Entry(parent, path, data, updated=None, cnttype=None, source=None,
               **kwds) -> new instance
@@ -881,7 +881,7 @@ class RoutingRequestHandler(HTTPRequestHandler):
         else:
             self.send_405()
 
-class RouteSet:
+class RouteSet(object):
     """
     RouteSet(fixroutes=None, dynroutes=None, fbfunc=None) -> new instance
 

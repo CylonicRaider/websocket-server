@@ -17,7 +17,7 @@ except ImportError: # Py3K
 
 __all__ = ['WebSocketMixIn', 'WebSocketRequestHandler']
 
-class WebSocketMixIn:
+class WebSocketMixIn(object):
     """
     Mixin class for BaseHTTPRequestHandler implementing WebSocket handshakes.
 

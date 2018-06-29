@@ -1,6 +1,6 @@
 [MESSAGES CONTROL]
 
-disable=abstract-class-little-used,attribute-defined-outside-init,bad-whitespace,import-error,invalid-name,locally-disabled,maybe-no-member,multiple-statements,no-init,no-name-in-module,no-self-argument,no-self-use,old-style-class,protected-access,redefined-builtin,star-args,superfluous-parens,too-many-arguments,too-many-branches,too-many-instance-attributes,too-many-lines,too-many-locals,too-many-public-methods,too-many-return-statements,too-many-statements,unused-argument,wildcard-import
+disable=abstract-class-little-used,attribute-defined-outside-init,bad-whitespace,import-error,invalid-name,locally-disabled,maybe-no-member,multiple-statements,no-init,no-name-in-module,no-self-argument,no-self-use,protected-access,redefined-builtin,star-args,superfluous-parens,too-many-arguments,too-many-branches,too-many-instance-attributes,too-many-lines,too-many-locals,too-many-public-methods,too-many-return-statements,too-many-statements,unused-argument,wildcard-import
 
 [REPORTS]
 

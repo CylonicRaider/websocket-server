@@ -156,7 +156,7 @@ class CaseDict(collections.MutableMapping):
         del self._data[self._keys[lower_key]]
         del self._keys[lower_key]
 
-class FormData:
+class FormData(object):
     """
     FormData(pairs=()) -> new instance
 

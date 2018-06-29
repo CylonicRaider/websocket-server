@@ -97,7 +97,7 @@ class CookieLoadError(Exception):
     Raised if trying to load cookies from a badly formatted file.
     """
 
-class Cookie:
+class Cookie(object):
     """
     Cookie(name, value, url=None, **attributes) -> new instance
 
@@ -463,7 +463,7 @@ class Cookie:
         if self._expires is None: return Ellipsis
         return (time.time() < self._expires)
 
-class CookieJar:
+class CookieJar(object):
     """
     CookieJar() -> new instance
 
@@ -855,7 +855,7 @@ class LWPCookieJar(FileCookieJar):
             self.add(Cookie.parse(m.group(1), parse_attr=parse_attr,
                                   make_url=make_url))
 
-class RequestHandlerCookies:
+class RequestHandlerCookies(object):
     """
     RequestHandlerCookies(handler, descs) -> new instance
 
