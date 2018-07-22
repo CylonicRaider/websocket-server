@@ -10,6 +10,7 @@ import argparse
 
 from .server import WebSocketMixIn
 from .httpserver import ThreadingHTTPServer, RoutingRequestHandler
+from .httpserver import validate_origin
 
 __all__ = ['RoutingWebSocketRequestHandler', 'run']
 
@@ -41,24 +42,37 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
             It can be used to pass on the values of the options configured
             using prepare to the server object and the handler class.
     """
+    # Named function for better argparse output.
+    def origin(s): return validate_origin(s)
     # Parse command-line arguments.
     p = argparse.ArgumentParser()
     p.add_argument('--port', '-p', metavar='PORT', type=int, default=8080,
-                   help='Specify the port to run on.')
+                   help='The TCP port to run on.')
     p.add_argument('--host', '-s', metavar='IP', default='',
-                   help='Specify the network interface to bind to.')
+                   help='The network interface to bind to.')
+    p.add_argument('--origin', '-O', type=origin,
+                   help='A SCHEME://HOST[:PORT] string indicating how '
+                       'clients should access this server. If omitted, '
+                       'an attempt is made to guess the value from the '
+                       '--host and --port parameters; if that fails, this '
+                       'remains unset.')
     # Call preparation callback
     if prepare: prepare(p)
     # Actually parse arguments.
     arguments = p.parse_args()
     # Create server.
     httpd = server((arguments.host, arguments.port), handler)
-    # Print status message.
+    if arguments.origin: httpd.origin = arguments.origin
+    # Print header message.
+    # Since the server has bound itself when it was contructed above, we can
+    # insert the final origin value.
     if arguments.host:
-        sys.stderr.write('Serving HTTP on %s:%s...\n' %
-                         (arguments.host, arguments.port))
+        address = '%s:%s' % (arguments.host, arguments.port)
     else:
-        sys.stderr.write('Serving HTTP on *:%s...\n' % arguments.port)
+        address = '*:%s' % arguments.port
+    origin_string = 'N/A' if httpd.origin is None else httpd.origin
+    sys.stderr.write('Serving HTTP on %s (origin %s)...\n' % (address,
+                                                              origin_string))
     sys.stderr.flush()
     # Call second preparation hook
     if premain: premain(httpd, arguments)

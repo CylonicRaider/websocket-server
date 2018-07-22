@@ -26,13 +26,17 @@ except ImportError: # Py3K
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
 
-__all__ = ['HTTPError', 'FileCache', 'callback_producer',
+__all__ = ['HTTPError', 'guess_origin', 'OriginHTTPServer',
+           'ThreadingHTTPServer', 'FileCache', 'callback_producer',
            'HTTPRequestHandler', 'RoutingRequestHandler', 'RouteSet']
 
 WILDCARD_RE = re.compile(r'<([a-zA-Z_][a-zA-Z0-9_]*)>|\\(.)')
 ESCAPE_RE = re.compile(r'[\0-\x1f \\]')
 ESCAPE_INNER_RE = re.compile(r'[\0- \\"]')
 QUOTE_RE = re.compile(r'[\0-\x1f\\"]')
+
+# FIXME: Support non-ASCII domain names.
+ORIGIN_RE = re.compile(r'^[a-zA-Z]+://[a-zA-Z0-9.-]+(:\d+)?$')
 
 REDIRECT_BODY = '''\
 <!DOCTYPE html>
@@ -89,9 +93,52 @@ def normalize_path(path):
         path = path[len(os.path.sep):]
     return path
 
-class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+def guess_origin(host, port):
     """
-    Multi-threaded HTTP server.
+    guess_origin(host, port) -> str
+
+    Attempt to guess an HTTP origin from the given host and port, or return
+    None.
+    """
+    if host is None or host == '': return None
+    scheme = 'https' if port == 443 else 'http'
+    if scheme == 'http' and port == 80:
+        portstr = ''
+    elif scheme == 'https' and port == 443:
+        portstr = ''
+    else:
+        portstr = ':' + str(port)
+    return scheme + '://' + host + portstr
+
+def validate_origin(origin):
+    """
+    validate_origin(origin) -> str
+
+    Return origin unchanged if it is a valid HTTP origin and raise a
+    ValueError exception otherwise.
+    """
+    if ORIGIN_RE.match(origin): return origin
+    raise ValueError('Invalid HTTP origin: %s' % (origin,))
+
+class OriginHTTPServer(HTTPServer):
+    """
+    Extension of HTTPServer providing an HTTP origin.
+
+    If the origin is not specified in the same-named instance attribute, an
+    attempt is made to guess it when server_bind() is invoked.
+    """
+
+    def server_bind(self):
+        "Overridden method to provide attitional behavior."
+        HTTPServer.server_bind(self)
+        try:
+            if self.origin is None: raise AttributeError
+        except AttributeError:
+            self.origin = guess_origin(self.server_name, self.server_port)
+
+class ThreadingHTTPServer(ThreadingMixIn, OriginHTTPServer):
+    """
+    Multi-threaded HTTP server with origin support.
 
     Necessary for parallel use by many clients. Used by the quick module.
     """

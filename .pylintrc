@@ -18,6 +18,11 @@ docstring-min-length=3
 max-line-length=78
 single-line-if-stmt=yes
 
+[MISCELLANEOUS]
+
+# FIXME is used for issues that do not require immediate attention.
+notes=XXX,TODO
+
 [EXCEPTIONS]
 
 overgeneral-exceptions=
