@@ -849,6 +849,8 @@ class LWPCookieJar(FileCookieJar):
                     raise CookieLoadError('Invalid file header.')
                 firstline = False
                 continue
+            if re.match(r'^\s*#', line):
+                continue
             m = re.match(r'^\s*Set-Cookie3:\s*(.*)\s*$', line)
             if not m:
                 raise CookieLoadError('Invalid cookie line.')
