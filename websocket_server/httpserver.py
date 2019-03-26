@@ -534,6 +534,10 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
     NOTE that these cannot deal with uploads of large files.
     """
 
+    # Python's library defaults to HTTP/1.0 (!), which is rejected when newer
+    # browsers attempt WebSocket connections.
+    protocol_version = 'HTTP/1.1'
+
     def setup(self):
         """
         setup() -> None
