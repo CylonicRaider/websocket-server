@@ -77,6 +77,25 @@ class HTTPError(Exception):
         self.code = code
         self.desc = desc
 
+def _log_escape(s, inner=False):
+    "Escape s for HTTP logging. The precise mode depends on inner."
+    def makehex(m): return r'\x%02x' % ord(m.group())
+    if s is None: return '-'
+    return (ESCAPE_INNER_RE if inner else ESCAPE_RE).sub(makehex, s)
+
+def _log_escape_int(v):
+    "Format v for HTTP logging as an integer."
+    try:
+        return str(int(v))
+    except (TypeError, ValueError):
+        return '-'
+
+def _log_quote(s):
+    "Quote s for HTTP logging."
+    def makehex(m): return r'\x%02x' % ord(m.group())
+    if s is None: return '-'
+    return '"' + QUOTE_RE.sub(makehex, s) + '"'
+
 def normalize_path(path):
     """
     normalize_path(path) -> str
@@ -518,7 +537,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
     An HTTP request handler with additional convenience functions.
 
     To enable advanced logging, set the _log_data attribute to a new
-    dictionary in the setup() method. The following keys are of significance:
+    dictionary in the reset() method. The following keys are of significance:
     userid: The identity of the user submitting the request as a string. Not
             set by HTTPRequestHandler, but might be set by user code.
     code  : The HTTP status code. Set in log_request().
@@ -538,17 +557,26 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
     # browsers attempt WebSocket connections.
     protocol_version = 'HTTP/1.1'
 
-    def setup(self):
+    def reset(self):
         """
-        setup() -> None
+        reset() -> None
 
-        Perform instance initialization.
+        Perform per-request instance initialization.
         """
-        BaseHTTPRequestHandler.setup(self)
         self._log_data = None
         self._cookies = None
         self._getvars = None
         self._postvars = None
+
+    def handle_one_request(self):
+        """
+        handle_one_request() -> None
+
+        Parent class method overridden to invoke reset() before actually
+        handling the request.
+        """
+        self.reset()
+        BaseHTTPRequestHandler.handle_one_request(self)
 
     def log_request(self, code='-', size='-'):
         """
@@ -589,37 +617,38 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         already been logged); this method sets it to None to allow multiple
         invocations to produce only one log entry.
         """
-        def makehex(m):
-            return r'\x%02x' % ord(m.group())
-        def escape(s):
-            if s is None: return '-'
-            return ESCAPE_RE.sub(makehex, s)
-        def escape_inner(s):
-            return ESCAPE_INNER_RE.sub(makehex, s)
-        def escape_int(s):
-            try:
-                return str(int(s))
-            except (TypeError, ValueError):
-                return '-'
-        def quote(s):
-            if s is None: return '-'
-            return '"' + QUOTE_RE.sub(makehex, s) + '"'
         if self._log_data is None: return
         extradata = self._log_data.get('extra')
         if extradata:
-            extra = ' "' + ' '.join(escape_inner(k) + '=' +
-                escape_inner(str(v)) for k, v in extradata.items()) + '"'
+            extra = ' "' + ' '.join(_log_escape(k, True) + '=' +
+                _log_escape(str(v), True) for k, v in extradata.items()) + '"'
         else:
             extra = ''
-        sys.stderr.write('%s - %s [%s] %s %s %s %s %s%s\n' % (
-            self.client_address[0], escape(self._log_data.get('userid')),
-            self.log_date_time_string(), quote(self.requestline),
-            escape_int(self._log_data.get('code')),
-            escape_int(self._log_data.get('size')),
-            quote(self.headers.get('Referer')),
-            quote(self.headers.get('User-Agent')), extra))
-        sys.stderr.flush()
+        self.log_message('%s %s %s %s %s%s',
+                         _log_quote(self.requestline),
+                         _log_escape_int(self._log_data.get('code')),
+                         _log_escape_int(self._log_data.get('size')),
+                         _log_quote(self.headers.get('Referer')),
+                         _log_quote(self.headers.get('User-Agent')),
+                         extra)
         self._log_data = None
+
+    def log_message(self, fmt, *args):
+        """
+        log_message(fmt, *args) -> None
+
+        Format a logging message and write it to standard error. The final
+        output contains the IP address of the current client, its user
+        identity (as extracted from _log_data, if present), the current date
+        and time (as returned by log_date_time_string()), and fmt
+        percent-formatted by args.
+        """
+        userid = self._log_data.get('userid') if self._log_data else None
+        sys.stderr.write('%s - %s [%s] %s\n' % (self.client_address[0],
+                                                _log_escape(userid),
+                                                self.log_date_time_string(),
+                                                fmt % args))
+        sys.stderr.flush()
 
     def cookie_descs(self):
         """
@@ -790,13 +819,13 @@ class RoutingRequestHandler(HTTPRequestHandler):
             return self.handle_request
         raise AttributeError(name)
 
-    def setup(self):
+    def reset(self):
         """
-        setup() -> None
+        reset() -> None
 
         Perform instance initialization.
         """
-        HTTPRequestHandler.setup(self)
+        HTTPRequestHandler.reset(self)
         self._log_data = {'extra': {}}
 
     def end_headers(self):
