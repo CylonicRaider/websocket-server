@@ -17,7 +17,8 @@ import threading
 
 from .compat import callable, unicode
 from .cookies import RequestHandlerCookies
-from .tools import format_http_date, parse_http_date, htmlescape, FormData
+from .tools import MONTH_NAMES, format_http_date, parse_http_date, htmlescape
+from .tools import FormData
 
 try: # Py2K
     from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
@@ -632,6 +633,28 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                          _log_quote(self.headers.get('User-Agent')),
                          extra)
         self._log_data = None
+
+    def log_date_time_string(self):
+        """
+        log_date_time_string() -> str
+
+        Return the current date and time formatted according to the Common
+        (HTTP) Log Format.
+        """
+        t = time.time()
+        tm = time.localtime(t)
+        try: # Py3K
+            tzoffset = tm.tm_gmtoff
+        except AttributeError: # Py2K
+            tm = time.gmtime(t)
+            tzoffset = 0
+        tzprefix = '-' if tzoffset < 0 else '+'
+        tzoffset = abs(tzoffset)
+        tzoffset_str = '%02d%02d' % (divmod(tzoffset // 60, 60))
+        if tzoffset % 60: tzoffset_str += '%02d' % (tzoffset % 60)
+        return '%04d/%s/%02d:%02d:%02d:%02d %s%s' % (
+            tm.tm_year, MONTH_NAMES[tm.tm_mon], tm.tm_mday,
+            tm.tm_hour, tm.tm_min, tm.tm_sec, tzprefix, tzoffset_str)
 
     def log_message(self, fmt, *args):
         """

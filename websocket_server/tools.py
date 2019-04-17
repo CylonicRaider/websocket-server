@@ -18,12 +18,17 @@ try: # Py2K
 except ImportError: # Py3K
     from urllib.parse import parse_qsl
 
-__all__ = ['mask', 'new_mask', 'format_http_date', 'parse_http_date',
-           'htmlescape', 'CaseDict', 'FormData']
+__all__ = ['MONTH_NAMES', 'mask', 'new_mask', 'format_http_date',
+           'parse_http_date', 'htmlescape', 'CaseDict', 'FormData']
 
 # Liberal recognition of the ISO 8601 date-time format used by cookies.py.
 ISO_DATETIME_RE = re.compile(r'^ (\d+) - (\d+) - (\d+) (?:T )?'
     r'(\d+) : (\d+) : (\d+) Z? $'.replace(r' ', r'\s*'))
+
+# The English month names as three-letter abbreviations.
+MONTH_NAMES = {1: 'Jan',  2: 'Feb',  3: 'Mar',  4: 'Apr',
+               5: 'May',  6: 'Jun',  7: 'Jul',  8: 'Aug',
+               9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
 
 def mask(key, data):
     """
