@@ -892,6 +892,14 @@ class RequestHandlerCookies(object):
         self.descs = descs
         self.cookies = {}
 
+    def __contains__(self, key):
+        """
+        key in self -> bool
+
+        Return whether this instance contains a cookie with the given name.
+        """
+        return key in self.cookies
+
     def __getitem__(self, key):
         """
         self[key] -> value
@@ -931,6 +939,20 @@ class RequestHandlerCookies(object):
         Return the cookie corresponding to name, or default if not found.
         """
         return self.cookies.get(name, default)
+
+    def get_value(self, name, default=None):
+        """
+        get_value(name, default=None) -> value
+
+        Retrieve the value of the cookie with the given name, or default if
+        there is no such cookie.
+        NOTE that cookies that were specified without a value (i.e. with a
+             name only) have a value of None; it is not possible to
+             differentiate them from their absence if a default of None is
+             used.
+        """
+        c = self.get(name)
+        return default if c is None else c.value
 
     def make(self, name, value):
         """
