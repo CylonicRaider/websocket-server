@@ -10,7 +10,7 @@ import argparse
 
 from .server import WebSocketMixIn
 from .httpserver import ThreadingHTTPServer, RoutingRequestHandler
-from .httpserver import validate_origin
+from .httpserver import validate_origin, parse_origin
 
 __all__ = ['RoutingWebSocketRequestHandler', 'run']
 
@@ -46,10 +46,12 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
     def origin(s): return validate_origin(s)
     # Parse command-line arguments.
     p = argparse.ArgumentParser()
-    p.add_argument('--port', '-p', metavar='PORT', type=int, default=8080,
-                   help='The TCP port to run on.')
-    p.add_argument('--host', '-s', metavar='IP', default='',
-                   help='The network interface to bind to.')
+    p.add_argument('--port', '-p', metavar='PORT', type=int,
+                   help='The TCP port to run on (defaults to the port from '
+                       'the origin, or 8080).')
+    p.add_argument('--host', '-s', metavar='IP',
+                   help='The network interface to bind to (defaults to the '
+                       'host from the origin, or any interface.')
     p.add_argument('--origin', '-O', type=origin,
                    help='A SCHEME://HOST[:PORT] string indicating how '
                        'clients should access this server. If omitted, '
@@ -60,6 +62,14 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
     if prepare: prepare(p)
     # Actually parse arguments.
     arguments = p.parse_args()
+    # Resolve complex defaults.
+    if arguments.origin:
+        scheme, host, port = parse_origin(arguments.origin)
+        if arguments.host is None: arguments.host = host
+        if arguments.port is None: arguments.port = port
+    else:
+        if arguments.host is None: arguments.host = ''
+        if arguments.port is None: arguments.port = 8080
     # Create server.
     httpd = server((arguments.host, arguments.port), handler)
     if arguments.origin: httpd.origin = arguments.origin

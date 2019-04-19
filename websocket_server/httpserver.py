@@ -27,9 +27,10 @@ except ImportError: # Py3K
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
 
-__all__ = ['HTTPError', 'guess_origin', 'OriginHTTPServer',
-           'ThreadingHTTPServer', 'FileCache', 'callback_producer',
-           'HTTPRequestHandler', 'RoutingRequestHandler', 'RouteSet']
+__all__ = ['HTTPError', 'normalize_path', 'guess_origin', 'validate_origin',
+           'parse_origin', 'OriginHTTPServer', 'ThreadingHTTPServer',
+           'FileCache', 'callback_producer', 'HTTPRequestHandler',
+           'RoutingRequestHandler', 'RouteSet']
 
 WILDCARD_RE = re.compile(r'<([a-zA-Z_][a-zA-Z0-9_]*)>|\\(.)')
 ESCAPE_RE = re.compile(r'[\0-\x1f \\]')
@@ -37,7 +38,7 @@ ESCAPE_INNER_RE = re.compile(r'[\0- \\"]')
 QUOTE_RE = re.compile(r'[\0-\x1f\\"]')
 
 # FIXME: Support non-ASCII domain names.
-ORIGIN_RE = re.compile(r'^[a-zA-Z]+://[a-zA-Z0-9.-]+(:\d+)?$')
+ORIGIN_RE = re.compile(r'^([a-zA-Z]+)://([a-zA-Z0-9.-]+)(?::(\d+))?$')
 
 REDIRECT_BODY = '''\
 <!DOCTYPE html>
@@ -139,6 +140,23 @@ def validate_origin(origin):
     """
     if ORIGIN_RE.match(origin): return origin
     raise ValueError('Invalid HTTP origin: %s' % (origin,))
+
+def parse_origin(origin):
+    """
+    parse_origin(origin) -> (scheme, host, port)
+
+    Decompose the given HTTP origin string into its constituent parts. The
+    scheme and the hostname are mandatory; the port is derived from the scheme
+    if not specified explicitly.
+    """
+    m = ORIGIN_RE.match(origin)
+    if not m: raise ValueError('Invalid HTTP origin: %s' % (origin,))
+    scheme, host, rawport = m.groups()
+    if rawport:
+        port = int(rawport, 10)
+    else:
+        port = 443 if scheme == 'https' else 80
+    return (scheme, host, port)
 
 class OriginHTTPServer(HTTPServer):
     """
