@@ -834,7 +834,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         send_redirect(code, target, send_text=True, cookies=False) -> None
 
         Send a complete mimimal HTTP redirect response. code is the status
-        code to use (e.g. 303), target is the URL to redirect to, send_text
+        code to use (e.g. 302), target is the URL to redirect to, send_text
         determines whether a minimal HTML response body is sent, cookies
         specifies whether cookies should be sent along with the response.
         """
