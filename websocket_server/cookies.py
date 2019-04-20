@@ -6,9 +6,13 @@ Cookie management utilities.
 
 (Mostly) compliant to RFC 6265. The alternatives present in the Python
 standard library are too tightly coupled to be used outside it.
+
+Most classes in this module are *not* thread-safe; exceptions are noted
+explicitly.
 """
 
 import os, re, time
+import threading
 
 from . import tools
 from .compat import unicode
@@ -480,6 +484,13 @@ class CookieJar(object):
              value of this attribute is passed on to Cookie instances
              created by this class. Use with caution.
 
+    CookieJar implements the context manager procotol, asserting an
+    internal (reentrant) threading lock while "entered". While the
+    individual CookieJar methods are thread-safe (as well), the
+    enclosed Cookie instances are *not* -- in order to perform multiple
+    coordinated accesses (including retrieving and mutating a cookie),
+    synchronize the entire sequence of accesses using a with block.
+
     NOTE that modifying the name, path, or domain of a cookie stored
          in a CookieJar leads to erratic behavior.
     """
@@ -492,6 +503,14 @@ class CookieJar(object):
         """
         self.cookies = {}
         self.relaxed = False
+        self.lock = threading.RLock()
+
+    def __enter__(self):
+        "Context manager entry; see class docstring for details."
+        return self.lock.__enter__()
+    def __exit__(self, *args):
+        "Context manager exit; see class docstring for details."
+        self.lock.__exit__(*args)
 
     def __repr__(self):
         """
@@ -499,7 +518,8 @@ class CookieJar(object):
 
         Return a programmer-friendly string representation of self.
         """
-        return '<%s%s>' % (self.__class__.__name__, list(self))
+        with self:
+            return '<%s%s>' % (self.__class__.__name__, list(self))
 
     def __len__(self):
         """
@@ -507,7 +527,8 @@ class CookieJar(object):
 
         Return the amount of cookies stored in self.
         """
-        return len(self.cookies)
+        with self:
+            return len(self.cookies)
 
     def __contains__(self, obj):
         """
@@ -515,7 +536,8 @@ class CookieJar(object):
 
         Return whether the given cookie is contained in self.
         """
-        return obj in self.cookies
+        with self:
+            return obj in self.cookies
 
     def __iter__(self):
         """
@@ -523,7 +545,8 @@ class CookieJar(object):
 
         Return an iterator over all cookies in self.
         """
-        return iter(self.cookies.values())
+        with self:
+            return iter(self.cookies.values())
 
     def add(self, cookie, validate=False):
         """
@@ -540,21 +563,22 @@ class CookieJar(object):
         Cookie.create() class method to craft a cookie that passes the
         validation.
         """
-        if self.relaxed: cookie.relaxed = True
-        if validate:
-            if not cookie.valid(): return False
-            try:
-                old = self.cookies[cookie.key]
-                # Force a KeyError unless the attribute is present.
-                old['HttpOnly'] #pylint: disable=W0104
-            except KeyError:
-                pass
-            else:
-                if cookie.url is None: return False
-                purl = urlsplit(cookie.url)
-                if purl.scheme not in HTTP_SCHEMES: return False
-        self.cookies[cookie.key] = cookie
-        return True
+        with self:
+            if self.relaxed: cookie.relaxed = True
+            if validate:
+                if not cookie.valid(): return False
+                try:
+                    old = self.cookies[cookie.key]
+                    # Force a KeyError unless the attribute is present.
+                    old['HttpOnly'] #pylint: disable=W0104
+                except KeyError:
+                    pass
+                else:
+                    if cookie.url is None: return False
+                    purl = urlsplit(cookie.url)
+                    if purl.scheme not in HTTP_SCHEMES: return False
+            self.cookies[cookie.key] = cookie
+            return True
 
     def remove(self, cookie):
         """
@@ -563,11 +587,12 @@ class CookieJar(object):
         Remove the given cookie (or an equivalent one) from self.
         Returns whether an equivalent cookie was actually present.
         """
-        try:
-            del self.cookies[cookie.key]
-            return True
-        except KeyError:
-            return False
+        with self:
+            try:
+                del self.cookies[cookie.key]
+                return True
+            except KeyError:
+                return False
 
     def filter(self, predicate=None):
         """
@@ -581,7 +606,8 @@ class CookieJar(object):
         after modifying the domain, path, or name attributes of
         cookies.
         """
-        self.cookies = dict((c.key, c) for c in filter(predicate, self))
+        with self:
+            self.cookies = dict((c.key, c) for c in filter(predicate, self))
 
     def clear(self, domain=None, path=None):
         """
@@ -598,24 +624,25 @@ class CookieJar(object):
              domain and path are normalized similarly to how the Cookie
              implementation does.
         """
-        if domain is None and path is None:
-            self.cookies.clear()
-            return
-        if domain is None:
-            dmatch = lambda x: False
-        else:
-            domain = domain.lower().lstrip('.')
-            dmatch = lambda x: domains_match(domain, x)
-        if path is None:
-            pmatch = lambda x: False
-        else:
-            scnt = path.count('/')
-            if scnt <= 1:
-                path = '/'
+        with self:
+            if domain is None and path is None:
+                self.cookies.clear()
+                return
+            if domain is None:
+                dmatch = lambda x: False
             else:
-                path = path[:path.rindex('/')]
-            pmatch = lambda x: paths_match(path, x)
-        self.filter(lambda c: not (dmatch(c.key[0]) and pmatch(c.key[1])))
+                domain = domain.lower().lstrip('.')
+                dmatch = lambda x: domains_match(domain, x)
+            if path is None:
+                pmatch = lambda x: False
+            else:
+                scnt = path.count('/')
+                if scnt <= 1:
+                    path = '/'
+                else:
+                    path = path[:path.rindex('/')]
+                pmatch = lambda x: paths_match(path, x)
+            self.filter(lambda c: not (dmatch(c.key[0]) and pmatch(c.key[1])))
 
     def cleanup(self, expired=True, session=False):
         """
@@ -630,7 +657,8 @@ class CookieJar(object):
             if expired and not fresh: return False
             if session and fresh is Ellipsis: return False
             return True
-        self.filter(check)
+        with self:
+            self.filter(check)
 
     def query(self, url):
         """
@@ -641,11 +669,12 @@ class CookieJar(object):
         either; use cleanup() for that.
         """
         info = parse_url(url)
-        ret = [c for c in self if c._matches(info) and c.is_fresh()]
-        # We don't (reliably) record the creation time, so the path alone
-        # will do.
-        ret.sort(key=lambda c: c['Path'], reverse=True)
-        return ret
+        with self:
+            ret = [c for c in self if c._matches(info) and c.is_fresh()]
+            # We don't (reliably) record the creation time, so the path alone
+            # will do.
+            ret.sort(key=lambda c: c['Path'], reverse=True)
+            return ret
 
     def format_cookie(self, url):
         """
@@ -654,9 +683,10 @@ class CookieJar(object):
         Format a ready-to-use Cookie: header value for sending in a
         request to url, or None if there are no cookies for it.
         """
-        cookies = self.query(url)
-        if not cookies: return None
-        return '; '.join(c.format('return') for c in cookies)
+        with self:
+            cookies = self.query(url)
+            if not cookies: return None
+            return '; '.join(c.format('return') for c in cookies)
 
     def process_set_cookie(self, url, string):
         """
@@ -724,9 +754,10 @@ class FileCookieJar(CookieJar):
         def check(cookie):
             f = cookie.is_fresh()
             return (f and f is not Ellipsis)
-        self.file.seek(0)
-        self.save_to(self.file, (check if cleanup else None))
-        self.file.truncate()
+        with self:
+            self.file.seek(0)
+            self.save_to(self.file, (check if cleanup else None))
+            self.file.truncate()
 
     def save_to(self, stream, predicate=None):
         """
@@ -734,6 +765,17 @@ class FileCookieJar(CookieJar):
 
         Serialize the cookies matching predicate (all if it is None)
         into the given stream.
+        """
+        with self:
+            self._save_to(stream, predicate)
+
+    def _save_to(self, stream, predicate=None):
+        """
+        _save_to(stream, predicate=None) -> None
+
+        Back-end method for save_to(), which calls this method with the
+        synchronization lock held.
+        The default "implementation" raises a NotImplementedError.
         """
         raise NotImplementedError
 
@@ -746,9 +788,10 @@ class FileCookieJar(CookieJar):
         they are merged, with the cookies from the file taking
         precedence.
         """
-        self.file.seek(0)
-        if replace: self.clear()
-        self.load_from(self.file)
+        with self:
+            self.file.seek(0)
+            if replace: self.clear()
+            self.load_from(self.file)
 
     def load_from(self, stream):
         """
@@ -756,6 +799,17 @@ class FileCookieJar(CookieJar):
 
         Read cookies from the given stream, merging with the internal
         state (cookies from the stream take precedence).
+        """
+        with self:
+            self._load_from(stream)
+
+    def _load_from(self, stream):
+        """
+        _load_from(stream) -> None
+
+        Back-end method for load_from(), which calls this method with the
+        synchronization lock held.
+        The default "implementation" raises a NotImplementedError.
         """
         raise NotImplementedError
 
@@ -765,7 +819,8 @@ class FileCookieJar(CookieJar):
 
         Close the underlying file.
         """
-        self.file.close()
+        with self:
+            self.file.close()
 
 class LWPCookieJar(FileCookieJar):
     """
@@ -782,9 +837,9 @@ class LWPCookieJar(FileCookieJar):
         'domain': 'Domain', 'expires': 'Expires', 'comment': 'Comment',
         'commenturl': 'CommentURL'}
 
-    def save_to(self, stream, predicate=None):
+    def _save_to(self, stream, predicate=None):
         """
-        save_to(stream, predicate=None) -> None
+        _save_to(stream, predicate=None) -> None
 
         See FileCookieJar for details.
         """
@@ -817,9 +872,9 @@ class LWPCookieJar(FileCookieJar):
                 lambda k, v: format_attr(cookie, k, v)))
         stream.flush()
 
-    def load_from(self, stream):
+    def _load_from(self, stream):
         """
-        load_from(stream) -> None
+        _load_from(stream) -> None
 
         See FileCookieJar for details.
         """
