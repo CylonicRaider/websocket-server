@@ -4,8 +4,8 @@
 """
 Cookie management utilities.
 
-(Mostly) compliant to RFC 6265. The alternatives present in the standard
-library are too tightly coupled to be used outside it.
+(Mostly) compliant to RFC 6265. The alternatives present in the Python
+standard library are too tightly coupled to be used outside it.
 """
 
 import os, re, time
@@ -35,6 +35,7 @@ def domains_match(base, probe):
     as domain names. Implements RFC6265, Section 5.1.3.
     """
     if probe == base:
+        # Equal domains always match.
         return True
     prefix = probe[:-len(base)]
     if not probe.endswith(base) or (prefix and not prefix.endswith('.')):
@@ -60,9 +61,9 @@ def paths_match(base, probe):
 
 def parse_url(url):
     """
-    parse_url(url) -> (str, str, str)
+    parse_url(url) -> (scheme, host, path)
 
-    Parse url and return the scheme, host, and path normalized as
+    Parse url and return the scheme, host, and path as strings normalized as
     convenient for Cookie.matches() et al.
     """
     purl = urlsplit(url)
@@ -73,7 +74,7 @@ def parse_cookie(string):
     """
     parse_cookie(string) -> dict
 
-    Parse the given Cookie: header value and return a mapping of cookie
+    Parse the given Cookie: header value and return a mapping from cookie
     names to values.
     """
     ret = {}
@@ -94,7 +95,7 @@ def format_set_cookie(cookie):
 
 class CookieLoadError(Exception):
     """
-    Raised if trying to load cookies from a badly formatted file.
+    Raised if trying to load cookies from an incorrectly formatted file.
     """
 
 class Cookie(object):
@@ -113,13 +114,13 @@ class Cookie(object):
     insertion (delete and re-add an attribute to force a specific
     case).
 
-    Make sure to choose only appropriate names/values; Cookie does not
-    empoly any means of automatic escaping.
+    WARNING: Make sure to choose only appropriate names/values; Cookie
+             does not empoly any means of automatic escaping.
 
     Instance members are:
     name   : The name of the cookie.
     value  : The value of the cookie.
-    url    : The URL the cookie is associated to.
+    url    : The URL the cookie is associated with.
     key    : A sorting and comparison key. Read-only.
     attrs  : The attributes of the cookie.
     relaxed: Whether certain security features (i.e. the Secure and
@@ -133,15 +134,16 @@ class Cookie(object):
         create(name, value, url) -> new instance
 
         Create a cookie with the given name and value, initializing
-        attributes from the given URL. The host name from it is used
-        for the Domain attribute, the path for the Path, query string
-        parameters are converted into additional attributes.
+        attributes from the given URL. The scheme is used to set the
+        Secure attribute (or not), the host name from it is used for
+        Domain, the path for Path, and query string parameters are
+        converted into additional attributes.
         """
-        purl = urlsplit(url)
+        scheme, host, path = parse_url(url)
         attrs = tools.CaseDict()
-        if purl.scheme in SECURE_SCHEMES: attrs['Secure'] = None
-        if purl.hostname: attrs['Domain'] = purl.hostname
-        attrs['Path'] = purl.path or '/'
+        if scheme in SECURE_SCHEMES: attrs['Secure'] = None
+        if host: attrs['Domain'] = host
+        attrs['Path'] = path
         for k, v in parse_qsl(purl.query, True):
             if v:
                 attrs[k] = v
@@ -184,13 +186,13 @@ class Cookie(object):
         """
         _parse_attr(key, value) -> (key, value)
 
-        Convert the given cookie attribute to a programmatically usable
-        format. key is the name of the attribute (and always present); value
-        is either the value as a string, or None if no value was given. Both
-        key and value have surrounding whitespace removed.
-        The default implementation turns false values (including empty
-        strings) into None and properly parses the Expires, Path, and Max-Age
-        attributes.
+        Convert the given cookie attribute to a programmatically
+        usable format. key is the name of the attribute (and always
+        present); value is either the value as a string, or None if no
+        value was given. Both key and value have surrounding whitespace
+        removed. The default implementation turns false values
+        (including empty strings) into None and properly parses the
+        Expires, Path, and Max-Age attributes.
         """
         lkey = key.lower()
         if value and value.startswith('"') and value.endswith('"'):
