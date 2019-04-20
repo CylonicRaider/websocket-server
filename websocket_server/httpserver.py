@@ -322,28 +322,47 @@ class FileCache(object):
             self.updated = updated
             self.cnttype = cnttype
             self.source = source
-            scnt, supd = str(cnttype), str(updated)
+            self.etag = self.calc_etag()
+
+        def calc_etag(self):
+            """
+            calc_etag() -> str
+
+            Compute an HTTP ETag for this Entry. The default implementation
+            computes a hash covering the cnttype, updated, and data
+            attributes.
+            """
+            scnt, supd = str(self.cnttype), str(self.updated)
             h = hashlib.md5(('%s,%s;%s,%s;' % (len(scnt), len(supd),
                 scnt, supd)).encode('ascii'))
-            h.update(data)
-            self.etag = h.hexdigest()
+            h.update(self.data)
+            return h.hexdigest()
+
+        def is_valid(self):
+            """
+            is_valid() -> bool
+
+            Determine whether this Entry is valid.
+            """
+            if self.source is None: return True
+            st = os.stat(self.source)
+            return (st.st_mtime == self.updated)
 
         def validate(self):
             """
             validate() -> Entry
 
-            Verify that this Entry is still up-to-date, if not so, return a
-            replacement, otherwise, return self.
+            Verify that this Entry is still up-to-date (see is_valid()), if
+            not so, return a replacement, otherwise, return self.
 
             This should be called regularly to ensure the resource served is
             still up-to-date.
             """
-            if self.source is not None:
-                st = os.stat(self.source)
-                if st.st_mtime != self.updated:
-                    return self.read(self.parent, self.path, self.source,
-                                     self.cnttype)
-            return self
+            if self.is_valid():
+                return self
+            else:
+                return self.read(self.parent, self.path, self.source,
+                                 self.cnttype)
 
         def send(self, handler, force=False):
             """
