@@ -1090,39 +1090,48 @@ class RouteSet(object):
                         dict((k, list(v)) for k, v in self.dynroutes),
                         self.fbfunc)
 
-    def add(self, func, path, method='GET'):
+    def add(self, func, path, method='GET', fixed=None):
         """
-        add(func, path, method='GET') -> None
+        add(func, path, method='GET', fixed=None) -> None
 
         Add a new route to the route set. func is the callback to invoke (see
         the class docstring for details); path is the path template to match
         (see below); method is the request method to match (note that
-        matching is case-sensitive).
+        matching is case-sensitive); fixed determines whether the route is
+        *not* dynamic (None means auto-detecting fixedness; see below).
 
-        path may contain "wildcards" following the "<NAME>" pattern (where
-        NAME is an identifier), and escape sequences consisting of a
-        backslash followed by a less-than sign (<). Using less-than signs or
-        backslashes in ways other than described here is not specified and
-        the behavior can change incompatibly in the future.
-        If a wildcard or escape sequence is present, the route automatically
-        becomes dynamic; each wildcard matches a "path component" (i.e. a
-        sequence of characters not containing slashes or question marks),
-        and the matched path component is passed to the callback as a named
-        argument (with the name taken from the wildcard).
+        If fixed is False or None, path may contain "wildcards" following the
+        "<NAME>" pattern (where NAME is an identifier), and escape sequences
+        consisting of a backslash (\) followed by a less-than sign (<). Using
+        less-than signs or backslashes in ways other than described here is
+        not specified and the behavior can change in an incompatible way in
+        the future.
+        If fixed is False, or fixed is None and path contains a wildcard, the
+        route becomes dynamic; then, each wildcard matches a "path component"
+        (i.e. a sequence of characters not containing slashes or question
+        marks), and the matched path component is passed to the callback as a
+        named argument (with the name taken from the wildcard).
+        If fixed is True, or fixed is None and path contains no wildcards, the
+        route is "fixed"; a fixed route matches path exactly, takes precedence
+        over dynamic routes, and passes no additional arguments to the
+        callback.
         """
-        pos, wildcards, regex = 0, False, ['^']
-        while 1:
-            m = WILDCARD_RE.search(path, pos)
-            if not m: break
-            wildcards = True
-            regex.append(re.escape(path[pos:m.start()]))
-            if m.group(1) is not None:
-                regex.append(r'(?P<%s>[^/?]+)' % m.group(1))
-            else:
-                regex.append(re.escape(m.group(2)))
-            pos = m.end()
+        if fixed is None or not fixed:
+            wildcards, pos, regex = (fixed is not None), 0, ['^']
+            while 1:
+                m = WILDCARD_RE.search(path, pos)
+                if not m: break
+                wildcards = True
+                regex.append(re.escape(path[pos:m.start()]))
+                if m.group(1) is not None:
+                    regex.append(r'(?P<%s>[^/?]+)' % m.group(1))
+                else:
+                    regex.append(re.escape(m.group(2)))
+                pos = m.end()
+        else:
+            wildcards = False
         if wildcards:
-            regex.append(path[pos:])
+            regex.append(re.escape(path[pos:]))
             regex.append('$')
             regex = re.compile(''.join(regex))
             self.dynroutes.setdefault(method, []).append((regex, func))
