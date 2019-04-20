@@ -11,8 +11,9 @@ request routing.
 
 import sys, os, re, time
 import errno, traceback
-import cgi
 import hashlib
+import posixpath
+import cgi
 import threading
 
 from .compat import callable, unicode
@@ -27,10 +28,11 @@ except ImportError: # Py3K
     from http.server import HTTPServer, BaseHTTPRequestHandler
     from socketserver import ThreadingMixIn
 
-__all__ = ['HTTPError', 'normalize_path', 'guess_origin', 'validate_origin',
-           'parse_origin', 'OriginHTTPServer', 'ThreadingHTTPServer',
-           'FileCache', 'callback_producer', 'HTTPRequestHandler',
-           'RoutingRequestHandler', 'RouteSet']
+__all__ = ['HTTPError', 'normalize_path_posix', 'safe_path_join',
+           'guess_origin', 'validate_origin', 'parse_origin',
+           'OriginHTTPServer', 'ThreadingHTTPServer', 'FileCache',
+           'callback_producer', 'HTTPRequestHandler', 'RoutingRequestHandler',
+           'RouteSet']
 
 WILDCARD_RE = re.compile(r'<([a-zA-Z_][a-zA-Z0-9_]*)>|\\(.)')
 ESCAPE_RE = re.compile(r'[\0-\x1f \\]')
@@ -98,21 +100,31 @@ def _log_quote(s):
     if s is None: return '-'
     return '"' + QUOTE_RE.sub(makehex, s) + '"'
 
-def normalize_path(path):
+def normalize_path_posix(path):
     """
-    normalize_path(path) -> str
+    normalize_path_posix(path) -> str
 
-    This makes a "normalize" relative path out of path, suitable to be
-    safely joined with some directory path.
-    path is first made absolute (by prepending os.path.sep), then
-    os.path.normpath() is applied, after which the path is made relative
-    (by removing all leading parent directory references).
+    Turn path into a relative POSIX path with no parent directory references.
     """
-    path = os.path.normpath(os.path.sep + path)
-    # *Should* run only once...
-    while path.startswith(os.path.sep):
-        path = path[len(os.path.sep):]
-    return path
+    return posixpath.relpath(posixpath.normpath(posixpath.join('/', path)),
+                             '/')
+
+def safe_path_join(base, path):
+    """
+    safe_path_join(base, path) -> str or None
+
+    Join base and path together, using local path semantics. This ensures that
+    the result points to a resource below base or returns None otherwise.
+    """
+    # Anti-path-traversal security voodoo be here.
+    res = os.path.normpath(os.path.join(base, path))
+    # normpath() along with the substring check block attempts to get into
+    # another directory (e.g. a path of "../etc/passwd").
+    if not res.startswith(base): return None
+    # This check blocks attempts to guess the trailing part of base (e.g.
+    # using "../www" against a base of "/var/www").
+    if os.path.relpath(res, base) != os.path.normpath(path): return None
+    return res
 
 def guess_origin(host, port):
     """
@@ -203,21 +215,23 @@ class FileCache(object):
               attribute is merged to amend missing keys.
 
     Keyword-only parameters:
+    norm_paths       : Pass paths through normalize_path_posix() before
+                       processing them in get(). Defaults to True.
     filter           : A callable or a container for whitelisting paths.
                        If callable, this is called before every access to
-                       a resource with the virtual path as only argument
-                       to determing whether the request is valid or should
-                       be rejected; if not callable, a membership test
-                       will be performed (like, path in filter) to
-                       determine whether the access should be allowed;
-                       this way, either a call-back or a precomputed list
-                       can be specified. A filter of None (the default)
-                       admits all paths.
+                       a resource with the (potentially normalized) virtual
+                       path as the only argument to determing whether the
+                       request is valid or should be rejected; if not
+                       callable, a membership test will be performed (like
+                       "path in filter") to determine whether the access
+                       should be allowed; this way, either a call-back or a
+                       precomputed list can be specified. A filter of None
+                       (the default) admits all paths.
     handle_dirs      : Handle directories. If true (as the default is),
                        access to directories is treated specially: If a
                        path that maps to a directory is requested, a
                        trailing slash (if not already present) is appended
-                       by redirecting the client (temporarily), then a
+                       by redirecting the client (using a 302 code), then a
                        file called "index.html" is delivered, instead of
                        the directory (if it exists). Because of the
                        redirecting, Entry.send() cannot be used for this,
@@ -227,12 +241,10 @@ class FileCache(object):
                        directories as absent.
     append_html      : If a file is absent and this is true (as the default
                        is not), FileCache.send() tries delivering the file
-                       with the ".html" suffix appended to the name before
-                       failing. Although this could be implemented in
-                       Entry.send(), it is in FileCache.send() for symmetry
-                       with handle_dirs. Can be used to provide "action
-                       paths" (such as "/login") whilst keeping semantic
-                       file extensions.
+                       with a ".html" suffix appended to the name before
+                       failing. This is implemented by FileCache.send() as
+                       well. Can be used to provide "action paths" (such as
+                       "/login") whilst keeping semantic file extensions.
     override_cnttypes: If true, the class attribute CNTTYPES will not be
                        considered while creating the content type mapping
                        (default is false; not taken over as an attribute).
@@ -248,15 +260,14 @@ class FileCache(object):
               NOTE: The mappings for .html and .txt include charset
                     specification clauses (both "charset=utf-8"). If your
                     files are not encoded in UTF-8, you can either
-                    override the value, or remember that you live in the
-                    third millenium.
-                    If you have somehow got this module into the past, you
-                    are on your own.
+                    override the value, or remember that this library was
+                    written in the third millenium; if you have somehow gotten
+                    this module into the past, you are on your own.
     """
 
-    CNTTYPES = {'.txt': 'text/plain; charset=utf-8',
+    CNTTYPES = {'.txt' : 'text/plain; charset=utf-8',
                 '.html': 'text/html; charset=utf-8',
-                '.css': 'text/css',
+                '.css' : 'text/css',
                 '.js': 'application/javascript',
                 '.ico': 'image/vnd.microsoft.icon'}
 
@@ -269,14 +280,15 @@ class FileCache(object):
 
         Constructor parameters:
         parent : The FileCache this Entry belongs to.
-        path   : The (virtual) path of the file (like, /favicon.ico).
+        path   : The (virtual) path of the file (like "/favicon.ico").
         data   : The data to be served as a byte string.
         updated: UNIX timestamp of the last update of the ressource, as a
                  floating-point number. Considered during etag calculation.
         cnttype: The content type to be used. None for "don't send".
         source : The (real) path of the file (if any; like,
-                 /var/www/websockets/favicon.ico). If not present, validate()
-                 assumes the ressource is virtual and does nothing.
+                 /var/www/websockets/favicon.ico). If not present,
+                 revalidate() assumes the ressource is virtual and does
+                 nothing.
 
         Extra keyword arguments are ignored.
 
@@ -348,9 +360,9 @@ class FileCache(object):
             st = os.stat(self.source)
             return (st.st_mtime == self.updated)
 
-        def validate(self):
+        def revalidate(self):
             """
-            validate() -> Entry
+            revalidate() -> Entry
 
             Verify that this Entry is still up-to-date (see is_valid()), if
             not so, return a replacement, otherwise, return self.
@@ -412,6 +424,7 @@ class FileCache(object):
         if cnttypes is None: cnttypes = {}
         self.webroot = webroot
         self.cnttypes = cnttypes
+        self.norm_paths = config.get('norm_paths', True)
         self.filter = config.get('filter', None)
         self.handle_dirs = config.get('handle_dirs', True)
         self.append_html = config.get('append_html', False)
@@ -430,14 +443,18 @@ class FileCache(object):
         """
         get(path, **kwds) -> Entry or Ellipsis or None
 
-        Get an Entry for the given path. Either validate a cached one, or
-        create a new one. If the path does not pass self.filter, None is
-        returned without performing any further action. If the path is
-        pointing to a directory (as determined by filesystem inspection or
-        the callable self.webroot), Ellipsis is returned. Keyword
-        arguments are passed to either self.webroot (if that is called),
-        or to the class-level read() method.
+        Get an Entry for the given path. Either revalidate a cached one, or
+        create a new one.
+        Prior to further processing, if the normalize_paths attribute is set,
+        the path is passed through normalize_path_posix(). If the (normalized)
+        path does not pass self.filter, None is returned without performing
+        any further action. If the path is pointing to a directory (as
+        determined by filesystem inspection or a callable self.webroot),
+        Ellipsis is returned. Keyword arguments are passed to either
+        self.webroot (if that is called), or to the class-level read() method.
         """
+        if self.norm_paths:
+            path = normalize_path_posix(path)
         if self.filter is None:
             pass
         elif callable(self.filter):
@@ -447,19 +464,18 @@ class FileCache(object):
         with self:
             ent = self.entries.get(path)
             if ent and ent is not Ellipsis:
-                ent = ent.validate()
+                ent = ent.revalidate()
             elif callable(self.webroot):
                 ent = self.webroot(self, path, **kwds)
             else:
                 if isinstance(self.webroot, dict):
-                    try:
-                        source = self.webroot[path]
-                    except KeyError:
-                        return None
+                    source = self.webroot.get(path)
                 else:
-                    source = normalize_path(path)
-                    source = os.path.join(self.webroot, source)
-                if os.path.isdir(source):
+                    ospath = path.replace('/', os.path.sep)
+                    source = safe_path_join(self.webroot, ospath)
+                if source is None:
+                    return None
+                elif os.path.isdir(source):
                     ent = Ellipsis
                 elif os.path.isfile(source):
                     ent = self.Entry.read(self, path, source, **kwds)
@@ -537,8 +553,9 @@ def callback_producer(callback, base='', guess_type=True):
     guess_type is true. Since the Entry is not actually tied to a
     filesystem object (as far as we know), its source attribute is None.
     If base is None, the path is passed without modification, otherwise,
-    it is normalized first (see normalize_path()) and joined with base; if
-    base is the empty string, the path is effectively only normalized.
+    it is normalized first (see normalize_path_posix()) and joined with base
+    using POSIX semantics; if base is the empty string, the path is
+    effectively only normalized.
     """
     def produce(parent, path):
         """
@@ -548,7 +565,8 @@ def callback_producer(callback, base='', guess_type=True):
         for details.
         """
         if base is not None:
-            path = os.path.join(base, normalize_path(path))
+            # "Normalized" paths are safe to join with w.r.t. POSIX semantics.
+            path = posixpath.join(base, normalize_path_posix(path))
         try:
             data = callback(path)
         except IOError as e:
