@@ -10,7 +10,7 @@ request routing.
 """
 
 import sys, os, re, time
-import errno
+import errno, traceback
 import cgi
 import hashlib
 import threading
@@ -674,6 +674,22 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             tm.tm_year, MONTH_NAMES[tm.tm_mon], tm.tm_mday,
             tm.tm_hour, tm.tm_min, tm.tm_sec, tzprefix, tzoffset_str)
 
+    def log_error(self, fmt, *args, **kwds):
+        """
+        log_error(fmt, *args, exc_info=False) -> None
+
+        Log an error message. By default, fmt and args are passed on to
+        log_message(); if exc_info is true, a pretty-printed stack trace
+        obtained from sys.exc_info() is added to the message by appending a
+        "\n%s" to fmt and the stack trace as a single string to args.
+        An alternate implementation might pass the message to a separate error
+        log.
+        """
+        if kwds.get('exc_info'):
+            fmt += "\n%s"
+            args += (traceback.format_exc().rstrip('\n'),)
+        self.log_message(fmt, *args)
+
     def log_message(self, fmt, *args):
         """
         log_message(fmt, *args) -> None
@@ -986,7 +1002,8 @@ class RoutingRequestHandler(HTTPRequestHandler):
         default implementation logs the exception and returns a plain 500
         response.
         """
-        self.log_error('%r', exc)
+        self.log_error('Exception while handling request: %r', exc,
+                       exc_info=True)
         self.send_500()
 
     def handle_fallback(self):
