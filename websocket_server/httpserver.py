@@ -1143,7 +1143,7 @@ class RouteSet(object):
                         self.fbfunc)
 
     def add(self, func, path, method='GET', fixed=None):
-        """
+        r"""
         add(func, path, method='GET', fixed=None) -> None
 
         Add a new route to the route set. func is the callback to invoke (see

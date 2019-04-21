@@ -64,7 +64,7 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
     arguments = p.parse_args()
     # Resolve complex defaults.
     if arguments.origin:
-        scheme, host, port = parse_origin(arguments.origin)
+        _, host, port = parse_origin(arguments.origin)
         if arguments.host is None: arguments.host = host
         if arguments.port is None: arguments.port = port
     else:
