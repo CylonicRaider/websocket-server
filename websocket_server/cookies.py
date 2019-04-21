@@ -930,7 +930,9 @@ class RequestHandlerCookies(object):
     default.
 
     The mapping protocol is partially implemented; for complex operations,
-    create a dict instance.
+    create a dict instance. Assigning cookies whose name does not match the
+    key they are mapped to is possible, but of little use (and may be
+    forbidden in the future).
 
     Normally, you do not need to create instances of this class; the
     HTTPRequestHandler class does so automatically.
@@ -1011,21 +1013,36 @@ class RequestHandlerCookies(object):
         c = self.get(name)
         return default if c is None else c.value
 
-    def make(self, name, value):
+    def add(self, cookie):
         """
-        make(name, value) -> Cookie
+        add(cookie) -> Cookie
+
+        Incorporate the given Cookie into this instance and return it.
+        """
+        self.cookies[cookie.name] = cookie
+        return cookie
+
+    def make(self, name, value, desc=None):
+        """
+        make(name, value, desc=None) -> Cookie
 
         Create and store a cookie with the given name and value, and return
-        it. name must be in the descs instance member, which is used to
-        initialize the cookie's attributes, or a KeyError occurs.
+        it. desc is used to initialize the cookie's attributes; if it is None,
+        name must be in the descs instance member (or descs must have a None
+        entry) and the corresponding entry is used as desc; if both desc is
+        None and no stored description matching name exists, a KeyError is
+        raised.
         """
-        try:
-            desc = self.descs[name]
-        except KeyError:
-            desc = self.descs[None]
-        c = Cookie.create(name, value, desc)
-        self.cookies[name] = c
-        return c
+        if desc is None:
+            try:
+                desc = self.descs[name]
+            except KeyError:
+                try:
+                    desc = self.descs[None]
+                except KeyError:
+                    raise KeyError('Could not find description for '
+                        'cookie %s' % name)
+        return self.add(Cookie.create(name, value, desc))
 
     def load(self):
         """
