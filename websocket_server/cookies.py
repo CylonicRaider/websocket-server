@@ -143,11 +143,11 @@ class Cookie(object):
         Domain, the path for Path, and query string parameters are
         converted into additional attributes.
         """
-        scheme, host, path = parse_url(url)
+        purl = urlsplit(url)
         attrs = tools.CaseDict()
-        if scheme in SECURE_SCHEMES: attrs['Secure'] = None
-        if host: attrs['Domain'] = host
-        attrs['Path'] = path
+        if purl.scheme in SECURE_SCHEMES: attrs['Secure'] = None
+        if purl.hostname: attrs['Domain'] = purl.hostname
+        attrs['Path'] = purl.path or '/'
         for k, v in parse_qsl(purl.query, True):
             if v:
                 attrs[k] = v
