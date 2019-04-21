@@ -21,7 +21,7 @@ __version__ = '2.0'
 # Auxiliary modules
 from . import compat, constants, exceptions, tools
 # Main modules
-from . import wsfile, cookies, httpserver, client, server
+from . import wsfile, cookies, httpserver, client, server, session
 # Helper modules
 from . import quick, examples
 
