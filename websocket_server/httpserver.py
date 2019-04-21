@@ -603,7 +603,8 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
     To use cookies, override the cookie_descs() method to return a mapping of
     cookie descriptions (not overriding it will work as well, but no cookies
     will be captured from the request in that case), and use the cookies
-    attribute.
+    attribute. To automatically submit cookies at the end of the response's
+    header section, set the send_cookies attribute to a true value.
     To conveniently access query strings and POSTed HTML forms, use the
     getvars and postvars attributes.
     NOTE that these cannot deal with uploads of large files.
@@ -612,6 +613,10 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
     # Python's library defaults to HTTP/1.0 (!), which is rejected when newer
     # browsers attempt WebSocket connections.
     protocol_version = 'HTTP/1.1'
+
+    # Whether to automatically send cookies to the client when end_headers()
+    # is invoked. Can be overridden on a per-class or per-instance basis.
+    send_cookies = False
 
     def reset(self):
         """
@@ -663,6 +668,16 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         BaseHTTPRequestHandler.send_header(self, name, value)
         if self._log_data is not None and name.lower() == 'content-length':
             self._log_data['size'] = value
+
+    def end_headers(self):
+        """
+        end_headers() -> None
+
+        Finish sending HTTP headers. This method sends cookies if send_cookies
+        is set, and forwards to the parent class afterwards.
+        """
+        if self.send_cookies: self.cookies.send()
+        BaseHTTPRequestHandler.end_headers(self)
 
     def really_log_request(self):
         """
@@ -862,7 +877,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-Type', cnttype)
         self.send_header('Content-Length', len(enctext))
-        if cookies: self.cookies.send()
+        if cookies: self.send_cookies = True
         self.end_headers()
         self.wfile.write(enctext)
 
@@ -885,7 +900,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_header('Location', target)
         if body: self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', len(body))
-        if cookies: self.cookies.send()
+        if cookies: self.send_cookies = True
         self.end_headers()
         self.wfile.write(body)
 
