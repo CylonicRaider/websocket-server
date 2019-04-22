@@ -51,7 +51,7 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
                        'the origin, or 8080).')
     p.add_argument('--host', '-s', metavar='IP',
                    help='The network interface to bind to (defaults to the '
-                       'host from the origin, or any interface.')
+                       'host from the origin, or any interface).')
     p.add_argument('--origin', '-O', type=origin,
                    help='A SCHEME://HOST[:PORT] string indicating how '
                        'clients should access this server. If omitted, '
