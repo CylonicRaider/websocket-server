@@ -5,9 +5,10 @@
 Various tools and utilities.
 """
 
-import os, re
+import os, re, time
+import threading
 import calendar
-import collections
+import collections, heapq
 import email.utils
 import xml.sax.saxutils
 
@@ -313,3 +314,201 @@ class FormData(object):
         for k, v in self.data.items():
             for e in v:
                 yield (k, e)
+
+class Scheduler(object):
+    """
+    Scheduler() -> new instance
+
+    An enhanced variant of the standard library's sched module. This allows
+    other threads to submit tasks while the scheduler is waiting for the next
+    task and have the submitted tasks execute at the correct time. Scheduled
+    tasks can be "daemonic" (a scheduler continues running while there are
+    non-daemonic tasks).
+
+    Scheduler instances support the context manager protocol; using a
+    Scheduler in a with statement prevents the scheduler from stopping while
+    the statement body runs.
+    """
+
+    class Task(object):
+        """
+        Task(parent, cb, timestamp, nice, daemon) -> new instance
+
+        A concrete task to be executed by a Scheduler. parent is the Scheduler
+        this task belongs to; cb is a callable to invoke when executing this
+        task; timestamp is the time at which this task is to be executed, nice
+        is used for prioritizing tasks which are to be executed at exactly the
+        same time (the lower nice, the earlier a task executes); daemon
+        defines whether this task is "daemonic" (i.e. does not prevent the
+        scheduler from stopping).
+
+        The constructor parameters are stored as correspondingly-named
+        instance attributes; those must not be changed after initialization
+        (or erratic behavior occurs). Additionally, there is a (read-only)
+        "cancelled" attribute that tells whether the task has been cancelled,
+        and a "started" attribute that tells whether the task has already
+        started running.
+        """
+
+        def __init__(self, parent, cb, timestamp, nice, daemon):
+            """
+            __init__(parent, cb, timestamp, nice, daemon) -> None
+
+            Instance initializer; see the class docstring for details.
+            """
+            self.parent = parent
+            self.cb = cb
+            self.timestamp = timestamp
+            self.nice = nice
+            self.daemon = daemon
+            self.cancelled = False
+            self.started = False
+            self._key = (self.timestamp, self.nice)
+
+        def __lt__(self, other): return self._key <  other._key
+        def __le__(self, other): return self._key <= other._key
+        def __eq__(self, other): return self._key == other._key
+        def __ne__(self, other): return self._key != other._key
+        def __ge__(self, other): return self._key >= other._key
+        def __gt__(self, other): return self._key >  other._key
+
+        def cancel(self):
+            """
+            cancel() -> bool
+
+            Cancel this task. Returns whether cancelling succeeded.
+            """
+            with self.parent.cond:
+                if not (self.daemon or self.cancelled or self.started):
+                    self.parent._pending -= 1
+                ok = (not self.cancelled and not self.started)
+                self.cancelled = True
+                self.parent.cond.notifyAll()
+            return ok
+
+    def __init__(self):
+        """
+        __init__() -> None
+
+        Instance initializer; see the class docstring for details.
+        """
+        self.queue = []
+        self.cond = threading.Condition()
+        self._references = 0
+
+    def __enter__(self):
+        "Context manager entry; see the class docstring for details."
+        with self.cond:
+            self._references += 1
+
+    def __exit__(self, *args):
+        "Context manager exit; see the class docstring for details."
+        with self.cond:
+            if self._references > 0:
+                self._references -= 1
+            self.cond.notifyAll()
+
+    def time(self):
+        """
+        time() -> float
+
+        Return the current time. The default implementation returns the
+        current UNIX time.
+        """
+        return time.time()
+
+    def wait(self, delay):
+        """
+        wait(delay) -> None
+
+        Sleep for the given amount of time. delay is either a floating-point
+        number denoting the amount of time to wait or None to wait forever
+        (until interrupted externally).
+        """
+        with self.cond:
+            self.cond.wait(delay)
+
+    def clear(self):
+        """
+        clear() -> None
+
+        Abort all pending tasks. Unless the scheduler is held in a with
+        statement, this stops concurrent run()s and wakes concurrent join()s.
+        """
+        with self.cond:
+            for task in self.queue:
+                task.cancel()
+
+    def add_raw(self, task):
+        """
+        add_raw(task) -> Task
+
+        Schedule the given task to be run and return it.
+        """
+        with self.cond:
+            if task.cancelled: return
+            heapq.heappush(self.queue, task)
+            if not task.daemon: self._references += 1
+            self.cond.notifyAll()
+        return task
+
+    def add_abs(self, cb, timestamp, nice=0, daemon=False):
+        """
+        add_abs(cb, timestamp, nice=0, daemon=False) -> Task
+
+        Schedule cb to be executed at timestamp. nice defines the resulting
+        task's niceness, daemon specifies whether it is daemonic (see the Task
+        class for details). Returns a new Task object, which can be used to
+        cancel execution again.
+        """
+        return self.add_raw(self.Task(self, cb, timestamp, nice, daemon))
+
+    def add(self, cb, timediff, nice=0, daemon=False):
+        """
+        add(cb, timediff, nice=0, daemon=False) -> Task
+
+        Schedule cb to be executed in timediff seconds. nice defines the
+        resulting task's niceness, daemon specifies whether it is daemonic
+        (see the Task class for details). Returns a new Task object, which can
+        be used to cancel execution again.
+
+        Note that non-default nice values are of little use since a
+        high-resolution timer is used for definiting what "in timediff
+        seconds" is by default, so that tasks created at different times will
+        probably have strictly different timestamps.
+        """
+        return self.add_abs(cb, self.time() + timediff, nice, daemon)
+
+    def run(self):
+        """
+        run() -> None
+
+        Run until no non-daemonic tasks and no holds on this scheduler are
+        left.
+        """
+        while 1:
+            with self.cond:
+                now = self.time()
+                while self._references > 0 and (not self.queue or
+                        self.queue[0].timestamp > now):
+                    if self.queue:
+                        self.wait(self.queue[0].timestamp - now)
+                    else:
+                        self.wait(None)
+                    now = self.time()
+                if self._references <= 0: break
+                head = heapq.heappop(self.queue)
+                if head.cancelled: continue
+                head.started = True
+                if not head.daemon: self._references -= 1
+            head.cb()
+
+    def join(self):
+        """
+        join() -> None
+
+        Wait until a concurrent invocation of run() finishes.
+        """
+        with self.cond:
+            while self._references > 0:
+                self.wait(None)
