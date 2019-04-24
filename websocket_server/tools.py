@@ -332,15 +332,15 @@ class Scheduler(object):
 
     class Task(object):
         """
-        Task(parent, cb, timestamp, nice, daemon) -> new instance
+        Task(parent, cb, timestamp, daemon, seq) -> new instance
 
         A concrete task to be executed by a Scheduler. parent is the Scheduler
         this task belongs to; cb is a callable to invoke when executing this
-        task; timestamp is the time at which this task is to be executed, nice
-        is used for prioritizing tasks which are to be executed at exactly the
-        same time (the lower nice, the earlier a task executes); daemon
-        defines whether this task is "daemonic" (i.e. does not prevent the
-        scheduler from stopping).
+        task; timestamp is the time at which this task is to be executed;
+        daemon defines whether this task is "daemonic" (i.e. does not prevent
+        the scheduler from stopping); seq is the sequence number of the task
+        (used to break ties when tasks are to be executed at exactly the same
+        time; the lower seq, the earlier a task runs).
 
         The constructor parameters are stored as correspondingly-named
         instance attributes; those must not be changed after initialization
@@ -350,20 +350,20 @@ class Scheduler(object):
         started running.
         """
 
-        def __init__(self, parent, cb, timestamp, nice, daemon):
+        def __init__(self, parent, cb, timestamp, daemon, seq):
             """
-            __init__(parent, cb, timestamp, nice, daemon) -> None
+            __init__(parent, cb, timestamp, daemon, seq) -> None
 
             Instance initializer; see the class docstring for details.
             """
             self.parent = parent
             self.cb = cb
             self.timestamp = timestamp
-            self.nice = nice
             self.daemon = daemon
+            self.seq = seq
             self.cancelled = False
             self.started = False
-            self._key = (self.timestamp, self.nice)
+            self._key = (self.timestamp, self.seq)
 
         def __lt__(self, other): return self._key <  other._key
         def __le__(self, other): return self._key <= other._key
@@ -395,6 +395,7 @@ class Scheduler(object):
         self.queue = []
         self.cond = threading.Condition()
         self._references = 0
+        self._seq = 0
 
     def __enter__(self):
         "Context manager entry; see the class docstring for details."
@@ -452,32 +453,52 @@ class Scheduler(object):
             self.cond.notifyAll()
         return task
 
-    def add_abs(self, cb, timestamp, nice=0, daemon=False):
+    def add_abs(self, cb, timestamp, daemon=False):
         """
-        add_abs(cb, timestamp, nice=0, daemon=False) -> Task
+        add_abs(cb, timestamp, daemon=False) -> Task
 
-        Schedule cb to be executed at timestamp. nice defines the resulting
-        task's niceness, daemon specifies whether it is daemonic (see the Task
-        class for details). Returns a new Task object, which can be used to
-        cancel execution again.
+        Schedule cb to be executed at timestamp. daemon specifies whether the
+        task is daemonic (see the Task class for details). Returns a new Task
+        object, which can be used to cancel execution again.
         """
-        return self.add_raw(self.Task(self, cb, timestamp, nice, daemon))
+        with self.cond:
+            self._seq += 1
+            return self.add_raw(self.Task(self, cb, timestamp, daemon,
+                                          self._seq))
 
-    def add(self, cb, timediff, nice=0, daemon=False):
+    def add(self, cb, timediff, daemon=False):
         """
-        add(cb, timediff, nice=0, daemon=False) -> Task
+        add(cb, timediff, daemon=False) -> Task
 
-        Schedule cb to be executed in timediff seconds. nice defines the
-        resulting task's niceness, daemon specifies whether it is daemonic
-        (see the Task class for details). Returns a new Task object, which can
-        be used to cancel execution again.
-
-        Note that non-default nice values are of little use since a
-        high-resolution timer is used for definiting what "in timediff
-        seconds" is by default, so that tasks created at different times will
-        probably have strictly different timestamps.
+        Schedule cb to be executed in timediff seconds. daemon specifies
+        whether the task is daemonic (see the Task class for details). Returns
+        a new Task object, which can be used to cancel execution again.
         """
-        return self.add_abs(cb, self.time() + timediff, nice, daemon)
+        return self.add_abs(cb, self.time() + timediff, daemon)
+
+    def add_now(self, cb, daemon=False):
+        """
+        add_now(cb, daemon=False) -> Task
+
+        Schedule cb to be executed as soon as possible. daemon specifies
+        whether the resulting task is daemonic (see the Task class for
+        details). Returns a new Task object, which can be used to cancel
+        execution again (should one have a chance before the task starts
+        running).
+        """
+        return self.add_abs(cb, self.time(), daemon)
+
+    def on_error(self, exc):
+        """
+        on_error(exc) -> None
+
+        Handle an error that occurred while executing a task's callback. exc
+        is the Exception instance pertaining to the error; sys.exc_info() may
+        be consulted as well.
+
+        The default implementation immediately re-raises exc.
+        """
+        raise exc
 
     def run(self):
         """
@@ -501,7 +522,10 @@ class Scheduler(object):
                 if head.cancelled: continue
                 head.started = True
                 if not head.daemon: self._references -= 1
-            head.cb()
+            try:
+                head.cb()
+            except Exception as exc:
+                self.on_error(exc)
 
     def join(self):
         """
