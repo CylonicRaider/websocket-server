@@ -323,11 +323,8 @@ class Scheduler(object):
     other threads to submit tasks while the scheduler is waiting for the next
     task and have the submitted tasks execute at the correct time. Scheduled
     tasks can be "daemonic" (a scheduler continues running while there are
-    non-daemonic tasks).
-
-    Scheduler instances support the context manager protocol; using a
-    Scheduler in a with statement prevents the scheduler from stopping while
-    the statement body runs.
+    non-daemonic tasks), and the scheduler can be "held" by other threads,
+    preventing it from shutting down while they might submit tasks.
     """
 
     class Task(object):
@@ -386,6 +383,66 @@ class Scheduler(object):
                 self.parent.cond.notifyAll()
             return ok
 
+    class Hold(object):
+        """
+        Hold(parent) -> new instance
+
+        An active hold prevents a Scheduler from stopping regardless of
+        whether any tasks are pending inside the scheduler. parent is the
+        Scheduler the hold is to happen upon.
+
+        The constructor parameter is stored as a same-named instance
+        attribute; additionally, the "active" attribute tells whether the
+        hold is actually effective.
+
+        Hold instances act as context managers; when used in a with statement,
+        the hold is established while the statement's body runs.
+        """
+
+        def __init__(self, parent):
+            """
+            __init__(parent) -> None
+
+            Instance initializer; see the class docstring for details.
+            """
+            self.parent = parent
+            self.active = False
+
+        def __enter__(self):
+            "Context manager entry; see the class docstring for details."
+            self.acquire()
+
+        def __exit__(self, *args):
+            "Context manager exit; see the class docstring for details."
+            self.release()
+
+        def acquire(self):
+            """
+            acquire() -> bool
+
+            Actually establish this hold. Returns whether successful (i.e.
+            whether the hold had not been established previously).
+            """
+            with self.parent.cond:
+                if self.active: return False
+                self.parent._references += 1
+                self.active = True
+                return True
+
+        def release(self):
+            """
+            release() -> bool
+
+            Undo this hold. Returns whether the hold has been successfully
+            released.
+            """
+            with self.parent.cond:
+                if not self.activ: return False
+                self.parent._references -= 1
+                self.active = False
+                self.parent.cond.notifyAll()
+                return True
+
     def __init__(self):
         """
         __init__() -> None
@@ -396,18 +453,6 @@ class Scheduler(object):
         self.cond = threading.Condition()
         self._references = 0
         self._seq = 0
-
-    def __enter__(self):
-        "Context manager entry; see the class docstring for details."
-        with self.cond:
-            self._references += 1
-
-    def __exit__(self, *args):
-        "Context manager exit; see the class docstring for details."
-        with self.cond:
-            if self._references > 0:
-                self._references -= 1
-            self.cond.notifyAll()
 
     def time(self):
         """
@@ -433,8 +478,8 @@ class Scheduler(object):
         """
         clear() -> None
 
-        Abort all pending tasks. Unless the scheduler is held in a with
-        statement, this stops concurrent run()s and wakes concurrent join()s.
+        Abort all pending tasks. Unless the scheduler is being held, this
+        stops concurrent run()s and wakes concurrent join()s.
         """
         with self.cond:
             for task in self.queue:
