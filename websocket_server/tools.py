@@ -566,11 +566,15 @@ class Scheduler(object):
                 head = heapq.heappop(self.queue)
                 if head.cancelled: continue
                 head.started = True
-                if not head.daemon: self._references -= 1
             try:
                 head.cb()
             except Exception as exc:
                 self.on_error(exc)
+            finally:
+                if not head.daemon:
+                    with self.cond:
+                        self._references -= 1
+                        self.cond.notifyAll()
 
     def join(self):
         """
