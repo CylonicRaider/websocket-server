@@ -13,12 +13,14 @@ well.
 
 ## Installation
 
-Use the usual methods, like cloning the repository and running `setup.py install`, or
+Use the usual methods, like cloning the repository and running
+`setup.py install`, or
 `pip install git+https://github.com/CylonicRaider/websocket-server.git`.
 
 ## Example
 
-After having installed the library (or having it available locally otherwise), run
+After having installed the library (or having it available locally otherwise),
+run
 
     python -m websocket_server.examples
 
