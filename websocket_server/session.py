@@ -15,6 +15,7 @@ This module is NYI.
 import threading
 
 from . import client
+from .tools import MutexBarrier
 
 __all__ = ['WebSocketSession']
 
@@ -61,6 +62,7 @@ class WebSocketSession(object):
         self.cond = threading.Condition()
         self.state = SST_DISCONNECTED
         self.state_goal = SST_DISCONNECTED
+        self._conn_spinner = MutexBarrier()
         self._conn = None
 
     def __enter__(self):
@@ -95,25 +97,23 @@ class WebSocketSession(object):
         threads are invoking this method concurrently).
         """
         with self:
-            # First, update instance variables and break out early if enabled.
             self.state_goal = state_goal
             if url is not None: self.url = url
             if not cycle and self.state == self.state_goal: return True
-        first = True
-        while 1:
-            with self:
-                # Break out of the loop if we are done; suppress breaking out
-                # too early if cycle is true.
-                if first and cycle:
-                    first = False
-                elif self.state == self.state_goal:
-                    return state_goal == self.state_goal
-                # Our turn to spin the state wheel.
-                self.state = _SST_SUCCESSORS[self.state]
-                if self.state == SST_CONNECTING:
-                    self._do_connect()
-                elif self.state == SST_DISCONNECTING:
-                    self._do_disconnect()
+        with self._conn_spinner:
+            while 1:
+                if self._conn_spinner.check():
+                    with self:
+                        self.state = _SST_SUCCESSORS[self.state]
+                        if self.state == SST_CONNECTING:
+                            func = self._do_connect
+                        elif self.state == SST_DISCONNECTING:
+                            func = self._do_disconnect
+                    func()
+                    self._conn_spinner.done()
+                with self:
+                    if self.state == state_goal:
+                        return True
 
     def _do_connect(self):
         """
@@ -125,9 +125,13 @@ class WebSocketSession(object):
         The URL to connect to is taken from the "url" instance attribute and
         the resulting WebSocketFile object is stored in the "_conn" attribute.
 
-        This method is called with internal locks asserted and need not take
-        particular care of concurrency issues.
+        Concurrency note: This method is called without the internal lock held
+        (but still serialized w.r.t. all other _do_connect()/_do_disconnect()
+        calls); take care to synchronize on the internal lock (e.g. using
+        "with self:") as needed.
         """
+        # HACK: We assume that attribute access is atomic. Subclasses changing
+        #       that should reimplement this method.
         self._conn = client.connect(self.url)
 
     def _do_disconnect(self):
@@ -139,11 +143,11 @@ class WebSocketSession(object):
         This closes the WebSocketFile stored at the "_conn" attribute and
         resets the latter to None.
 
-        This method is called with internal locks asserted and need not take
-        particular care of concurrency issues.
+        See _do_connect() for concurrency notes.
         """
-        self._conn.close()
-        self._conn = None
+        with self:
+            conn, self._conn = self._conn, None
+        conn.close()
 
     def connect(self, url=None):
         """
@@ -159,15 +163,17 @@ class WebSocketSession(object):
 
         Returns when the connection is achieved (which may be immediately).
 
-        Concurrency NOTE: If multiple calls to connect() / reconnect() /
-        disconnect() are active concurrently, they will "tug" the state of
+        Concurrency note: If multiple calls to connect() / reconnect() /
+        disconnect() are active concurrently, they will "tug" at the state of
         the session towards their respective goals against each other. The
         session will transition between the connection states in their proper
         order in a well-defined manner and finally arrive at the state aimed
-        at by the call to commence last. It is unspecified at which points of
+        at by the call to commence last. If a call is active without any
+        others interferring, it will finish after the minimal amount of state
+        transitions necessary; otherwise, it is unspecified at which points of
         this roundabout the individual calls will finish (and for how long it
-        will continue overall), but each call will return whether its goal
-        state was in effect when it returned.
+        will continue overall), other than each call will return whether its
+        goal state was in effect when it returned.
         """
         return self._spin_connstates(SST_CONNECTED, url=url)
 
