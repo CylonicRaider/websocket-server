@@ -28,6 +28,7 @@ _SST_SUCCESSORS = {SST_DISCONNECTED : SST_CONNECTING   ,
                    SST_CONNECTING   : SST_CONNECTED    ,
                    SST_CONNECTED    : SST_DISCONNECTING,
                    SST_DISCONNECTING: SST_DISCONNECTED }
+__all__.extend(_SST_SUCCESSORS)
 
 class WebSocketSession(object):
     """
