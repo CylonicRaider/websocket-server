@@ -736,3 +736,66 @@ class MutexBarrier(object):
             self._members.remove(tid)
             if wake or self._waiting == len(self._members):
                 self._cond.notifyAll()
+
+class EOFQueue(object):
+    """
+    EOFQueue() -> new instance
+
+    A thread-safe unbounded queue that represents a finite stream of elements.
+    The end of the stream is indicated by the producer calling the close()
+    method; after that, any elements stored in the queue can be retrieved
+    normally, whereafter get() raises an EOFError (an exception is used since
+    any value can be legitimately stored in the queue). After calling close(),
+    adding new elements is forbidden and raises an EOFError as well.
+    """
+
+    def __init__(self):
+        """
+        __init__() -> None
+
+        Instance initializer; see the class docstring for details.
+        """
+        self._cond = threading.Condition()
+        self._items = collections.deque()
+        self._eof = False
+
+    def get(self):
+        """
+        get() -> object or EOFError
+
+        Return the first item of the queue. If an item is available, it is
+        removed from the queue and returned; otherwise, if the queue has been
+        close()d, EOFError is raised; otherwise, this blocks until an item
+        is put into the queue (or the queue is closed) concurrently.
+        """
+        with self._cond:
+            while not self._items and not self._eof:
+                self._cond.wait()
+            if self._items:
+                return self._items.popleft()
+            else:
+                raise EOFError('End of EOFQueue reached')
+
+    def put(self, item):
+        """
+        put(item) -> None
+
+        Append item to the queue, potentially waking a concurrent get(). If
+        the queue has been close()d previously, this raises an EOFError.
+        """
+        with self._cond:
+            if self._eof:
+                raise EOFError('Attempting to add element to closed EOFQueue')
+            self._items.append(item)
+            self._cond.notify()
+
+    def close(self):
+        """
+        close() -> None
+
+        Indicate that no further elements will be added to the queue. If the
+        queue is already closed, nothing happens.
+        """
+        with self._cond:
+            self._eof = True
+            self._cond.notifyAll()
