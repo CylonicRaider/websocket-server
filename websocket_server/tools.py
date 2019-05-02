@@ -588,6 +588,73 @@ class Scheduler(object):
             while self._references > 0:
                 self.wait(None)
 
+class Future(object):
+    """
+    Future(cb) -> new instance
+
+    A wrapper around an object that may have yet to be computed. The
+    computation of the object is represented by the callable cb, which is
+    called with no arguments and returns the computed object.
+
+    Additional read-only instance attributes are:
+    value: The object enclosed by this Future, or None is not computed yet.
+    state: The computation state of this Future (one of the ST_PENDING ->
+           ST_COMPUTING -> ST_DONE constants). Note that reading this is
+           probably of little use since the value might change immediately
+           after accessing it.
+    """
+
+    ST_PENDING   = 'PENDING'
+    ST_COMPUTING = 'COMPUTING'
+    ST_DONE      = 'DONE'
+
+    def __init__(self, cb):
+        """
+        __init__(cb) -> None
+
+        Instance initializer; see the class docstring for details.
+        """
+        self.cb = cb
+        self.value = None
+        self.state = self.ST_PENDING
+        self._cond = threading.Condition()
+
+    def run(self):
+        """
+        run() -> None
+
+        Compute the value wrapped by this Future (if that has not happened
+        yet).
+        """
+        with self._cond:
+            if self._state != self.ST_PENDING: return
+            self._state = self.ST_COMPUTING
+        self.value = self.cb()
+        with self._cond:
+            self._state = self.ST_DONE
+            self._cond.notifyAll()
+
+    def get(self, wait=True, default=None, run=False):
+        """
+        get(wait=True, default=None, run=False) -> object
+
+        Retrieve the object wrapped by this Future. If wait is false, this
+        returns default immediately if the object is not available yet. If
+        compute and wait are true and the object is not available yet, it is
+        computed (in this thread).
+        """
+        with self._cond:
+            if self._state == self.ST_DONE:
+                return self.value
+            elif not wait:
+                return default
+        if compute:
+            self.run()
+        with self._cond:
+            while self._state != self.ST_DONE:
+                self._cond.wait()
+            return self.value
+
 class MutexBarrier(object):
     """
     MutexBarrier() -> new instance
