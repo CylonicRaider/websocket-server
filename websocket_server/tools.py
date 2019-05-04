@@ -88,6 +88,29 @@ def htmlescape(s):
     """
     return xml.sax.saxutils.escape(s, {'"': '&quot;', "'": '&#39;'})
 
+def spawn_thread(_func, *_args, **_kwds):
+    """
+    spawn_thread(func, *args, **kwds) -> threading.Thread
+
+    Create a non-daemonic thread executing func(*args, **kwds), start it,
+    and return it.
+    """
+    thr = threading.Thread(target=_func, args=_args, kwargs=_kwds)
+    thr.start()
+    return thr
+
+def spawn_daemon_thread(_func, *_args, **_kwds):
+    """
+    spawn_daemon_thread(func, *args, **kwds) -> threading.Thread
+
+    Create a daemonic thread executing func(*args, **kwds), start it, and
+    return it.
+    """
+    thr = threading.Thread(target=_func, args=_args, kwargs=_kwds)
+    thr.setDaemon(True)
+    thr.start()
+    return thr
+
 class CaseDict(collections.MutableMapping):
     """
     CaseDict(source=(), **update) -> new instance
