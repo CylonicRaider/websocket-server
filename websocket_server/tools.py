@@ -22,7 +22,8 @@ except ImportError: # Py3K
     import _thread
 
 __all__ = ['MONTH_NAMES', 'mask', 'new_mask', 'format_http_date',
-           'parse_http_date', 'htmlescape', 'CaseDict', 'FormData']
+           'parse_http_date', 'htmlescape', 'CaseDict', 'FormData',
+           'Scheduler', 'Future', 'EOFQueue', 'MutexBarrier']
 
 # Liberal recognition of the ISO 8601 date-time format used by cookies.py.
 ISO_DATETIME_RE = re.compile(r'^ (\d+) - (\d+) - (\d+) (?:T )?'
