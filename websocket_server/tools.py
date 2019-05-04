@@ -439,7 +439,7 @@ class Scheduler(object):
             released.
             """
             with self.parent.cond:
-                if not self.activ: return False
+                if not self.active: return False
                 self.parent._references -= 1
                 self.active = False
                 self.parent.cond.notifyAll()
@@ -666,7 +666,7 @@ class Future(object):
         with self._cond:
             if self._state == self.ST_DONE:
                 return self.value
-            elif not compute:
+            elif not run:
                 if timeout is None:
                     while self._state != self.ST_DONE:
                         self._cond.wait()
@@ -780,7 +780,7 @@ class MutexBarrier(object):
         """
         with self._cond:
             # Check for misuse.
-            tid = thread.get_ident()
+            tid = _thread.get_ident()
             if tid == self._worker:
                 raise RuntimeError('Did not call MutexBarrier.done() '
                     'although given true return value from check()')
