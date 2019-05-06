@@ -23,7 +23,8 @@ except ImportError: # Py3K
 
 __all__ = ['MONTH_NAMES', 'mask', 'new_mask', 'format_http_date',
            'parse_http_date', 'htmlescape', 'CaseDict', 'FormData',
-           'Scheduler', 'Future', 'EOFQueue', 'MutexBarrier']
+           'AtomicSequence', 'Scheduler', 'Future', 'EOFQueue',
+           'MutexBarrier']
 
 # Liberal recognition of the ISO 8601 date-time format used by cookies.py.
 ISO_DATETIME_RE = re.compile(r'^ (\d+) - (\d+) - (\d+) (?:T )?'
@@ -341,6 +342,42 @@ class FormData(object):
             for e in v:
                 yield (k, e)
 
+class AtomicSequence(object):
+    """
+    AtomicSequence(start=0, lock=None) -> new instance
+
+    A thread-safe counter. Each time an instance is called it returns the
+    current value of an internal counter (which is initialized with start) and
+    increments the counter. lock specifies the lock to synchonize on; if None
+    is passed, a new lock is created internally.
+    """
+
+    def __init__(self, start=0, lock=None):
+        """
+        __init__(start=0, lock=None) -> None
+
+        Instance initializer; see the class docstring for details.
+        """
+        if lock is None: lock = threading.RLock()
+        self.counter = start
+        self.lock = lock
+
+    def __call__(self):
+        """
+        __call__() -> int
+
+        Increment the internal counter and return its value *before* the
+        increment.
+
+        The return value is declared as "int"; specifying a different starting
+        value in the constructor may result in a different return type (as
+        long as one can meaningfully add 1 to instances of the type).
+        """
+        with self.lock:
+            ret = self.counter
+            self.counter += 1
+            return ret
+
 class Scheduler(object):
     """
     Scheduler() -> new instance
@@ -478,7 +515,7 @@ class Scheduler(object):
         self.queue = []
         self.cond = threading.Condition()
         self._references = 0
-        self._seq = 0
+        self._seq = AtomicSequence(lock=self.cond)
 
     def time(self):
         """
@@ -533,9 +570,8 @@ class Scheduler(object):
         object, which can be used to cancel execution again.
         """
         with self.cond:
-            self._seq += 1
             return self.add_raw(self.Task(self, cb, timestamp, daemon,
-                                          self._seq))
+                                          self._seq()))
 
     def add(self, cb, timediff, daemon=False):
         """
