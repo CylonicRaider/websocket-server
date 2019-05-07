@@ -638,6 +638,15 @@ class Scheduler(object):
                         self._references -= 1
                         self.cond.notifyAll()
 
+    def start(self, daemon=True):
+        """
+        start(daemon=True) -> threading.Thread
+
+        Start a background thread run()ning this Scheduler. daemon specifies
+        whether the thread is daemonic. The thread object is returned.
+        """
+        return (spawn_daemon_thread if daemon else spawn_thread)(self.run)
+
     def join(self):
         """
         join() -> None
