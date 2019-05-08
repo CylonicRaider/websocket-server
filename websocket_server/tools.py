@@ -659,11 +659,13 @@ class Scheduler(object):
 
 class Future(object):
     """
-    Future(cb) -> new instance
+    Future(cb, lock=None) -> new instance
 
     A wrapper around an object that may have yet to be computed. The
     computation of the object is represented by the callable cb, which is
-    called with no arguments and returns the computed object.
+    called with no arguments and returns the computed object. lock, if not
+    None, specifies the lock to synchronize internal operations on (defaulting
+    to a new lock of an appropriate type).
 
     Additional read-only instance attributes are:
     value: The object enclosed by this Future, or None is not computed yet.
@@ -683,16 +685,16 @@ class Future(object):
         succeed.
         """
 
-    def __init__(self, cb):
+    def __init__(self, cb, lock=None):
         """
-        __init__(cb) -> None
+        __init__(cb, lock=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
         self.cb = cb
         self.value = None
         self.state = self.ST_PENDING
-        self._cond = threading.Condition()
+        self._cond = threading.Condition(lock)
 
     def run(self):
         """
