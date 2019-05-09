@@ -15,7 +15,7 @@ This module is NYI.
 import threading
 
 from . import client
-from .tools import MutexBarrier
+from .tools import spawn_daemon_thread, Scheduler, MutexBarrier
 
 __all__ = ['WebSocketSession']
 
@@ -32,18 +32,20 @@ __all__.extend(_SST_SUCCESSORS)
 
 class WebSocketSession(object):
     """
-    WebSocketSession(url) -> new instance
+    WebSocketSession(url, scheduler=None) -> new instance
 
     A "session" spanning multiple WebSocket connections. url is the WebSocket
     URL to connect to.
 
     Instance attributes are:
-    url       : The URL to connect to. Initialized from the same-named
-                constructor parameter. May be modified after instance creation
-                to cause future connections to use that URL (but see
-                reconnect() for a safer way of achieving that).
+    url: The URL to connect to. Initialized from the same-named constructor
+         parameter. May be modified after instance creation to cause future
+         connections to use that URL (but see reconnect() for a safer way of
+         achieving that).
 
     Read-only instance attributes are:
+    scheduler : The Scheduler instance executing callbacks. If not set via the
+                same-named constructor parameter, a new instance is created.
     state     : The current connection state as one of the SST_* constants.
                 One of DISCONNECTED -> CONNECTING -> CONNECTED ->
                 DISCONNECTING -> DISCONNECTED ... (in that order). Reading
@@ -51,28 +53,33 @@ class WebSocketSession(object):
                 changed by another thread immediately afterwards.
     state_goal: The state this session is trying to achieve, as a SST_*
                 constant.
+    conn      : The current WebSocket connection (if any) as a WebSocketFile.
     """
 
-    def __init__(self, url):
+    def __init__(self, url, scheduler=None):
         """
-        __init__(url) -> None
+        __init__(url, scheduler=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
+        if scheduler is None: scheduler = Scheduler()
         self.url = url
-        self.cond = threading.Condition()
+        self.scheduler = scheduler
         self.state = SST_DISCONNECTED
         self.state_goal = SST_DISCONNECTED
+        self.conn = None
+        self._cond = threading.Condition()
         self._conn_spinner = MutexBarrier()
-        self._conn = None
+        self._scheduler_hold = scheduler.hold()
+        self._rthread = None
 
     def __enter__(self):
         "Context manager entry; internal."
-        self.cond.__enter__()
+        self._cond.__enter__()
 
     def __exit__(self, *args):
         "Context manager exit; internal."
-        self.cond.__exit__(*args)
+        self._cond.__exit__(*args)
 
     def _spin_connstates(self, state_goal, url=None, cycle=False):
         """
@@ -97,19 +104,29 @@ class WebSocketSession(object):
         at the time of the return (this might not be the case if multiple
         threads are invoking this method concurrently).
         """
+        def do_connect():
+            self._scheduler_hold.acquire()
+            self._do_connect()
+            self._rthread = spawn_daemon_thread(self.do_read_loop)
+        def do_disconnect():
+            try:
+                self._do_disconnect()
+            finally:
+                self._rthread = None
+                self._scheduler_hold.release()
         with self:
             self.state_goal = state_goal
             if url is not None: self.url = url
             if not cycle and self.state == self.state_goal: return True
-        with self._conn_spinner:
+        with self._conn_spinner, self.scheduler.hold():
             while 1:
                 if self._conn_spinner.check():
                     with self:
                         self.state = _SST_SUCCESSORS[self.state]
                         if self.state == SST_CONNECTING:
-                            func = self._do_connect
+                            func = do_connect
                         elif self.state == SST_DISCONNECTING:
-                            func = self._do_disconnect
+                            func = do_disconnect
                     func()
                     self._conn_spinner.done()
                 with self:
@@ -124,7 +141,7 @@ class WebSocketSession(object):
         variable.
 
         The URL to connect to is taken from the "url" instance attribute and
-        the resulting WebSocketFile object is stored in the "_conn" attribute.
+        the resulting WebSocketFile object is stored in the "conn" attribute.
 
         Concurrency note: This method is called without the internal lock held
         (but still serialized w.r.t. all other _do_connect()/_do_disconnect()
@@ -133,7 +150,32 @@ class WebSocketSession(object):
         """
         # HACK: We assume that attribute access is atomic. Subclasses changing
         #       that should reimplement this method.
-        self._conn = client.connect(self.url)
+        self.conn = client.connect(self.url)
+
+    def _do_read_loop(self):
+        """
+        _do_read_loop() -> None
+
+        Repeatedly read frames from the underlying WebSocket connection and
+        submit them to the scheduler for processing.
+        """
+        try:
+            conn, scheduler = self.conn, self.scheduler
+            while 1:
+                frame = conn.read_frame()
+                if frame is None: break
+                scheduler.add_now(lambda f=frame: self._handle_raw(f))
+        finally:
+            self._spin_connstates(SST_DISCONNECTED)
+
+    def _handle_raw(self, frame):
+        """
+        _handle_raw(frame) -> None
+
+        Handle a frame received from the WebSocket. This method is invoked in
+        the scheduler.
+        """
+        pass # NYI
 
     def _do_disconnect(self):
         """
@@ -141,13 +183,13 @@ class WebSocketSession(object):
 
         Actually disconnect the underlying WebSocket connection.
 
-        This closes the WebSocketFile stored at the "_conn" attribute and
+        This closes the WebSocketFile stored at the "conn" attribute and
         resets the latter to None.
 
         See _do_connect() for concurrency notes.
         """
         with self:
-            conn, self._conn = self._conn, None
+            conn, self.conn = self.conn, None
         conn.close()
 
     def connect(self, url=None):
