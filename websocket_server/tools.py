@@ -22,9 +22,9 @@ except ImportError: # Py3K
     import _thread
 
 __all__ = ['MONTH_NAMES', 'mask', 'new_mask', 'format_http_date',
-           'parse_http_date', 'htmlescape', 'CaseDict', 'FormData',
-           'AtomicSequence', 'Scheduler', 'Future', 'EOFQueue',
-           'MutexBarrier']
+           'parse_http_date', 'htmlescape', 'spawn_thread_ex', 'spawn_thread',
+           'spawn_daemon_thread', 'CaseDict', 'FormData', 'AtomicSequence',
+           'Scheduler', 'Future', 'EOFQueue', 'MutexBarrier']
 
 # Liberal recognition of the ISO 8601 date-time format used by cookies.py.
 ISO_DATETIME_RE = re.compile(r'^ (\d+) - (\d+) - (\d+) (?:T )?'
@@ -89,6 +89,23 @@ def htmlescape(s):
     """
     return xml.sax.saxutils.escape(s, {'"': '&quot;', "'": '&#39;'})
 
+def spawn_thread_ex(func, args, kwds, daemon=False, init=None):
+    """
+    spawn_thread_ex(func, args, kwds, daemon=False, init=None)
+        -> threading.Thread
+
+    Create a new thread and start it. The thread's target, arguments, and
+    keyword arguments are set to func, args, and kwds, respectively. If daemon
+    is true, the thread is daemonic. If init is not false, it is invoked
+    (synchronously) with the thread as the only positional argument just
+    before starting the thread. The thread object is returned.
+    """
+    thr = threading.Thread(target=func, args=args, kwargs=kwds)
+    thr.setDaemon(daemon)
+    if init: init(thr)
+    thr.start()
+    return thr
+
 def spawn_thread(_func, *_args, **_kwds):
     """
     spawn_thread(func, *args, **kwds) -> threading.Thread
@@ -96,9 +113,7 @@ def spawn_thread(_func, *_args, **_kwds):
     Create a non-daemonic thread executing func(*args, **kwds), start it,
     and return it.
     """
-    thr = threading.Thread(target=_func, args=_args, kwargs=_kwds)
-    thr.start()
-    return thr
+    return spawn_thread_ex(_func, _args, _kwds)
 
 def spawn_daemon_thread(_func, *_args, **_kwds):
     """
@@ -107,10 +122,7 @@ def spawn_daemon_thread(_func, *_args, **_kwds):
     Create a daemonic thread executing func(*args, **kwds), start it, and
     return it.
     """
-    thr = threading.Thread(target=_func, args=_args, kwargs=_kwds)
-    thr.setDaemon(True)
-    thr.start()
-    return thr
+    return spawn_thread_ex(_func, _args, _kwds, daemon=True)
 
 class CaseDict(collections.MutableMapping):
     """
