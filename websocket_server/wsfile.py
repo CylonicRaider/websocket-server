@@ -186,16 +186,16 @@ class WebSocketFile(object):
     with the handshake; see client_handshake() and server_handshake() for
     that.
 
-    WebSocketFile(rdfile, wrfile, server_side=False)
+    WebSocketFile(rdfile, wrfile, server_side=False, subprotocol=None)
     rdfile     : File to perform reading operations on.
     wrfile     : File to perform writing operations on.
     server_side: Whether to engage server-side behavior (if true) or not
                  (otherwise).
+    subprotocol: The subprotocol to be used.
 
     Attributes:
     server_side  : Whether this is a server-side WebSocketFile.
-    subprotocol  : The subprotocol to be used on this WebSocketFile.
-                   Defaults to None.
+    subprotocol  : The subprotocol as passed to the constructor.
     close_wrapped: Whether calling close() should close the underlying
                    files as well. Defaults to True.
     _rdlock      : threading.RLock instance used for serializing and
@@ -234,39 +234,40 @@ class WebSocketFile(object):
     MAXCONTFRAME = None
 
     @classmethod
-    def from_files(cls, rdfile, wrfile, server_side=False):
+    def from_files(cls, rdfile, wrfile, **kwds):
         """
-        from_files(cls, rdfile, wrfile, server_side=False)
-            -> WebSocketFile
+        from_files(rdfile, wrfile, **kwds) -> WebSocketFile
 
         Equivalent to the constructor; provided for symmetry.
         """
-        return cls(rdfile, wrfile, server_side)
+        return cls(rdfile, wrfile, **kwds)
 
     @classmethod
-    def from_socket(cls, sock, server_side=False):
+    def from_socket(cls, sock, **kwds):
         """
-        from_socket(cls, sock, server_side=False) -> WebSocketFile
+        from_socket(sock, **kwds) -> WebSocketFile
 
         Wrap a socket in a WebSocketFile. Uses the makefile() method to
-        obtain the file objects internally used.
+        obtain the file objects internally used. Keyword arguments are passed
+        on to the constructor.
         """
-        ret = cls.from_file(sock.makefile('rwb'), server_side)
+        ret = cls.from_file(sock.makefile('rwb'), **kwds)
         ret._socket = sock
         return ret
 
     @classmethod
-    def from_file(cls, file, server_side=False):
+    def from_file(cls, file, **kwds):
         """
-        from_file(cls, file, server_side=False) -> WebSocketFile
+        from_file(file, **kwds) -> WebSocketFile
 
-        Wrap a read-write file object.
+        Wrap a read-write file object. Keyword arguments are passed on to the
+        constructor.
         """
-        return cls(file, file, server_side)
+        return cls(file, file, **kwds)
 
-    def __init__(self, rdfile, wrfile, server_side=False):
+    def __init__(self, rdfile, wrfile, server_side=False, subprotocol=None):
         """
-        __init__(rdfile, wrfile, server_side=False) -> None
+        __init__(rdfile, wrfile, server_side=False, subprotocol=None) -> None
 
         See the class docstring for details.
         """
@@ -274,7 +275,7 @@ class WebSocketFile(object):
         self._wrfile = wrfile
         self._socket = None
         self.server_side = server_side
-        self.subprotocol = None
+        self.subprotocol = subprotocol
         self.close_wrapped = True
         self._rdlock = threading.RLock()
         self._wrlock = threading.RLock()

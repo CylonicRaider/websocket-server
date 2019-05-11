@@ -81,13 +81,14 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
     is omitted or None, cookies are not processed at all.
     Keyword arguments can be passed the underlying connection constructor
     via config.
-    The HTTP connection and response are stored in instance attributes of
-    the return value, as "request" and "response", respectively; the
-    socket of the connection is available as "_socket".
+    The URL connected to, the HTTP connection, and the HTTP response are
+    stored in instance attributes of the return value, as "url",
+    "request", and "response", respectively; the socket of the connection
+    is available as "_socket".
     Raises a ValueError if the URL is invalid, or a ProtocolError if the
-    remote host did not obey the protocol, a HTTPException if some HTTP-
-    related error occurs (such as failure to authenticate or redirect), or
-    whatever the underlying connection classes raise.
+    remote host did not obey the protocol, a HTTPException if some
+    HTTP-related error occurs (such as failure to authenticate or
+    redirect), or whatever the underlying connection classes raise.
     """
     if headers is None: headers = {}
     # Allow connection reuse; prevent redirect loops.
@@ -183,13 +184,15 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
         # NOTE: Have to read from resp itself, as it might have buffered the
         #       beginning of the server's data, as those might have been
         #       coalesced with the headers.
-        ret = wrap(resp, wrfile)
-        ret.subprotocol = p
+        ret = wrap(resp, wrfile, subprotocol=p)
+        ret.url = url
         ret._socket = sock
         ret.request = conn
         ret.response = resp
         return ret
     except:
+        import traceback
+        traceback.print_exc()
         # Clean up connection
         for f in (conn, rdfile, wrfile):
             if not f: continue
