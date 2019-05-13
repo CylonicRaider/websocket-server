@@ -15,7 +15,7 @@ This module is NYI.
 import threading
 
 from . import client
-from .tools import spawn_daemon_thread, Scheduler, MutexBarrier
+from .tools import spawn_daemon_thread, Scheduler
 
 __all__ = ['WebSocketSession']
 
@@ -47,10 +47,8 @@ class WebSocketSession(object):
     scheduler : The Scheduler instance executing callbacks. If not set via the
                 same-named constructor parameter, a new instance is created.
     state     : The current connection state as one of the SST_* constants.
-                One of DISCONNECTED -> CONNECTING -> CONNECTED ->
-                DISCONNECTING -> DISCONNECTED ... (in that order). Reading
-                this attribute is not particularly useful as it might be
-                changed by another thread immediately afterwards.
+                Reading this attribute is not particularly useful as it might
+                be changed by another thread immediately afterwards.
     state_goal: The state this session is trying to achieve, as a SST_*
                 constant.
     conn      : The current WebSocket connection (if any) as a WebSocketFile.
@@ -81,57 +79,76 @@ class WebSocketSession(object):
         "Context manager exit; internal."
         self._cond.__exit__(*args)
 
-    def _spin_connstates(self, state_goal, url=None, cycle=False):
+    def _cycle_connstates(self, disconnect=False, connect=False, url=None):
         """
-        _spin_connsates(state_goal, url=None, cycle=False) -> bool
+        _cycle_connstates(disconnect=False, connect=False, url=None) -> None
 
-        Internal method.
-
-        This advances the current connection state, performing connects and
-        disconnects as necessary, until state_goal is reached.
-
-        state_goal is stored in the same-named instance attribute, which is
-        used to determine when to return; the method parameter is used to
-        determine the return value.
-
-        url, if not None, is stored in the same-named instance attribute; the
-        latter is used to connect to now and in the future.
-
-        cycle, if true, suppresses an early return if the state_goal is
-        already met, enabling reconnect() to function.
-
-        Returns whether the state_goal as passed to this invocation was met
-        at the time of the return (this might not be the case if multiple
-        threads are invoking this method concurrently).
+        Internal method backing connect() etc. If disconnect is true, performs
+        a disconnect; if connect is true, performs a connect. url, if not
+        None, is stored in the same-named instance attribute. The "state_goal"
+        instance attribute is set to SST_CONNECTED if connect is true,
+        otherwise to SST_DISCONNECTED if disconnect is true, otherwise it is
+        unmodified.
         """
-        def do_connect():
-            self._scheduler_hold.acquire()
-            self._do_connect()
-            self._rthread = spawn_daemon_thread(self.do_read_loop)
-        def do_disconnect():
-            try:
-                self._do_disconnect()
-            finally:
-                self._rthread = None
-                self._scheduler_hold.release()
         with self:
-            self.state_goal = state_goal
-            if url is not None: self.url = url
-            if not cycle and self.state == self.state_goal: return True
-        with self._conn_spinner, self.scheduler.hold():
+            # Update attributes.
+            if connect:
+                self.state_goal = SST_CONNECTED
+            elif disconnect:
+                self.state_goal = SST_DISCONNECTED
+            if url is not None:
+                self.url = url
+            # Disconnect if told to, and potentially detach reader thread.
+            if disconnect:
+                if self.state == SST_CONNECTED:
+                    # Wake up reader thread if it is busy reading messages.
+                    self._do_disconnect()
+                if not connect:
+                    self._rthread = None
+            # Connect if told to; this amounts to spawning the reader thread
+            # and letting it do its work.
+            if connect and self._rthread is None:
+                self._rthread = spawn_daemon_thread(self._rthread_main)
+
+    def _rthread_main(self):
+        """
+        _rthread_main() -> None
+
+        Internal method: Outermost code of the background thread responsible
+        for reading WebSocket messages.
+        """
+        def keep_running():
+            "Return whether this reader thread should keep running."
+            return (self._rthread == this_thread and
+                    self.state_goal == SST_CONNECTED)
+        this_thread = threading.current_thread()
+        try:
             while 1:
-                if self._conn_spinner.check():
-                    with self:
-                        self.state = _SST_SUCCESSORS[self.state]
-                        if self.state == SST_CONNECTING:
-                            func = do_connect
-                        elif self.state == SST_DISCONNECTING:
-                            func = do_disconnect
-                    func()
-                    self._conn_spinner.done()
+                # Connect.
                 with self:
-                    if self.state == state_goal:
-                        return True
+                    if not keep_running(): return
+                    self.state = SST_CONNECTING
+                self._do_connect()
+                with self:
+                    if not keep_running(): return
+                    self.state = SST_CONNECTED
+                # Read messages.
+                self._do_read_loop()
+                # Disconnect.
+                with self:
+                    if not keep_running(): return
+                    self.state = SST_DISCONNECTING
+                self._do_disconnect()
+                with self:
+                    if not keep_running(): return
+                    self.state = SST_DISCONNECTED
+        finally:
+            with self:
+                if self._rthread is this_thread:
+                    if self.conn is not None:
+                        self._do_disconnect()
+                    self.state = SST_DISCONNECTED
+                    self._rthread = None
 
     def _do_connect(self):
         """
@@ -143,13 +160,11 @@ class WebSocketSession(object):
         The URL to connect to is taken from the "url" instance attribute and
         the resulting WebSocketFile object is stored in the "conn" attribute.
 
-        Concurrency note: This method is called without the internal lock held
-        (but still serialized w.r.t. all other _do_connect()/_do_disconnect()
-        calls); take care to synchronize on the internal lock (e.g. using
-        "with self:") as needed.
+        Concurrency note: This method is called with no locks held; attribute
+        accesses should be protected via "with self:" as necessary.
         """
-        # HACK: We assume that attribute access is atomic. Subclasses changing
-        #       that should reimplement this method.
+        # HACK: We assume that accessing single attributes is atomic.
+        #       Subclasses changing that should reimplement this method.
         self.conn = client.connect(self.url)
 
     def _do_read_loop(self):
@@ -159,14 +174,11 @@ class WebSocketSession(object):
         Repeatedly read frames from the underlying WebSocket connection and
         submit them to the scheduler for processing.
         """
-        try:
-            conn, scheduler = self.conn, self.scheduler
-            while 1:
-                frame = conn.read_frame()
-                if frame is None: break
-                scheduler.add_now(lambda f=frame: self._handle_raw(f))
-        finally:
-            self._spin_connstates(SST_DISCONNECTED)
+        conn, scheduler = self.conn, self.scheduler
+        while 1:
+            frame = conn.read_frame()
+            if frame is None: break
+            scheduler.add_now(lambda f=frame: self._handle_raw(f))
 
     def _handle_raw(self, frame):
         """
@@ -186,15 +198,18 @@ class WebSocketSession(object):
         This closes the WebSocketFile stored at the "conn" attribute and
         resets the latter to None.
 
-        See _do_connect() for concurrency notes.
+        Concurrency note: This method may be called concurrently to
+        _do_read_loop() in order to close a connection active concurrently;
+        appropriate precautions should be taken.
         """
         with self:
             conn, self.conn = self.conn, None
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     def connect(self, url=None):
         """
-        connect(url=None) -> bool
+        connect(url=None) -> None
 
         Bring this session into the "connected" state, creating a WebSocket
         connection (which will be renewed if it breaks before the next
@@ -202,40 +217,33 @@ class WebSocketSession(object):
 
         url, if not None, replaces the same-named instance attribute and is
         used as the URL future connections (including the one initiated by
-        this method, if any) go to.
+        this method, if any) go to. If a connect is going on concurrently,
+        it may or may not be redone in order to apply the new URL.
 
-        Returns when the connection is achieved (which may be immediately).
-
-        Concurrency note: If multiple calls to connect() / reconnect() /
-        disconnect() are active concurrently, they will "tug" at the state of
-        the session towards their respective goals against each other. The
-        session will transition between the connection states in their proper
-        order in a well-defined manner and finally arrive at the state aimed
-        at by the call to commence last. If a call is active without any
-        others interferring, it will finish after the minimal amount of state
-        transitions necessary; otherwise, it is unspecified at which points of
-        this roundabout the individual calls will finish (and for how long it
-        will continue overall), other than each call will return whether its
-        goal state was in effect when it returned.
+        Concurrency note: connect() / reconnect() / disconnect() initiate
+        asynchronous actions and return quickly. If multiple calls are
+        submitted in rapid succession, the effects of individual calls may be
+        superseded by others or elided. Eventually, the last call (i.e. the
+        last to acquire the internal synchronization lock) will prevail.
         """
-        return self._spin_connstates(SST_CONNECTED, url=url)
+        self._cycle_connstates(connect=True, url=url)
 
     def reconnect(self, url=None):
         """
-        reconnect(url=None) -> bool
+        reconnect(url=None) -> None
 
         Bring this session into the "connected" state, forcing a
         disconnect-connect cycle if it is already connected. See the notes for
         connect() for more details.
         """
-        return self._spin_connstates(SST_CONNECTED, url=url, cycle=True)
+        self._cycle_connstates(disconnect=True, connect=True, url=url)
 
     def disconnect(self):
         """
-        disconnect() -> bool
+        disconnect() -> None
 
         Bring this session into the "disconnected" state, closing the internal
         WebSocket connection if necessary. See the notes for connect() (but
         in reverse) for more details.
         """
-        return self._spin_connstates(SST_DISCONNECTED)
+        self._cycle_connstates(disconnect=True)
