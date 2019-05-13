@@ -706,11 +706,14 @@ class WebSocketFile(object):
         This does not perform a proper closing handshake and should be
         avoided in favor of close().
         """
+        # Waiting for locks contradicts the "now!" intention, so none of that
+        # here.
         self._read_close = True
         self._written_close = True
         self._closed = True
         if force or self.close_wrapped:
             if self._socket:
+                # Allow concurrent reads to finish gracefully.
                 try:
                     self._socket.shutdown(socket.SHUT_RDWR)
                 except socket.error:
@@ -729,16 +732,19 @@ class WebSocketFile(object):
                 except socket.error:
                     pass
 
-    def close_ex(self, code=None, message=None, wait=False):
+    def close_ex(self, code=None, message=None, wait=True):
         """
-        close_ex(code=None, message=None, wait=False) -> None
+        close_ex(code=None, message=None, wait=True) -> None
 
         Close the underlying connection, delivering the code and message
         (if given) to the other point. If code is None, message is
         ignored. If message is a Unicode string, it is encoded using
-        UTF-8. If wait is true, this will read frames from self until the
-        other side acknowledges the close; as this may cause data loss, be
-        careful.
+        UTF-8. If wait is true, this will read frames from self and discard
+        them until the other side acknowledges the close; as this may cause
+        data loss, be careful. The default is to ensure the WebSocket is
+        fully closed when the call finishes; when closing a WebSocket that
+        is read from in a different thread, specify wait=False and let the
+        other thread consume any remaining input.
         If the connection is already closed, the method has no effect
         (but might raise an exception if encoding code or message fails).
         """
@@ -758,8 +764,10 @@ class WebSocketFile(object):
             # Already closed?
             if self._written_close:
                 # Close underlying streams if necessary.
-                if self._read_close and not self._closed:
-                    self.close_now()
+                if self._read_close:
+                    if not self._closed:
+                        self.close_now()
+                    wait = False
             else:
                 # Write close frame.
                 self.write_single_frame(constants.OP_CLOSE, payload)
@@ -771,9 +779,9 @@ class WebSocketFile(object):
                 while self.read_single_frame(): pass
             self.close_ex()
 
-    def close(self, message=None, wait=False):
+    def close(self, message=None, wait=True):
         """
-        close(message=None, wait=False) -> None
+        close(message=None, wait=True) -> None
 
         Close the underlying connection with a code of CLOSE_NORMAL and
         the (optional) given message. If wait is true, this will read
