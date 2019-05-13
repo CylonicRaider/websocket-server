@@ -98,13 +98,11 @@ class WebSocketSession(object):
                 self.state_goal = SST_DISCONNECTED
             if url is not None:
                 self.url = url
-            # Disconnect if told to, and potentially detach reader thread.
-            if disconnect:
-                if self.state == SST_CONNECTED:
-                    # Wake up reader thread if it is busy reading messages.
-                    self._do_disconnect()
-                if not connect:
-                    self._rthread = None
+            # Disconnect if told to.
+            if disconnectand and self.state == SST_CONNECTED:
+                # Wake up reader thread if it is busy reading messages; it
+                # will eventually detach itself.
+                self._do_disconnect(True)
             # Connect if told to; this amounts to spawning the reader thread
             # and letting it do its work.
             if connect and self._rthread is None:
@@ -163,9 +161,11 @@ class WebSocketSession(object):
         Concurrency note: This method is called with no locks held; attribute
         accesses should be protected via "with self:" as necessary.
         """
-        # HACK: We assume that accessing single attributes is atomic.
-        #       Subclasses changing that should reimplement this method.
-        self.conn = client.connect(self.url)
+        with self:
+            url = self.url
+        conn = client.connect(url)
+        with self:
+            self.conn = conn
 
     def _do_read_loop(self):
         """
@@ -189,21 +189,24 @@ class WebSocketSession(object):
         """
         pass # NYI
 
-    def _do_disconnect(self):
+    def _do_disconnect(self, asynchronous=False):
         """
-        _do_disconnect() -> None
+        _do_disconnect(asynchronous=False) -> None
 
-        Actually disconnect the underlying WebSocket connection.
+        Actually disconnect the underlying WebSocket connection. asynchronous
+        tells whether this close is initiated from the thread responsible for
+        reading messages (False) or to interrupt a connection ongoing
+        concurrently (True).
 
-        This closes the WebSocketFile stored at the "conn" attribute and
-        resets the latter to None.
+        This closes the WebSocketFile stored at the "conn" attribute, and
+        resets the latter to None if asynchronous is false.
 
-        Concurrency note: This method may be called concurrently to
-        _do_read_loop() in order to close a connection active concurrently;
-        appropriate precautions should be taken.
+        Concurrency note: As this method may be called to interrupt an ongoing
+        connection, it should be particularly cautious about thread safety.
         """
         with self:
-            conn, self.conn = self.conn, None
+            conn = self.conn
+            if not asynchronous: self.conn = None
         if conn is not None:
             conn.close()
 
