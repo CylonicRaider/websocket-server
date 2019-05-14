@@ -208,7 +208,7 @@ class WebSocketSession(object):
             conn = self.conn
             if not asynchronous: self.conn = None
         if conn is not None:
-            conn.close()
+            conn.close(wait=(not asynchronous))
 
     def connect(self, url=None):
         """
