@@ -115,10 +115,10 @@ class WebSocketSession(object):
         Internal method: Outermost code of the background thread responsible
         for reading WebSocket messages.
         """
-        def keep_running():
+        def keep_running(ignore_state=False):
             "Return whether this reader thread should keep running."
             return (self._rthread == this_thread and
-                    self.state_goal == SST_CONNECTED)
+                    (ignore_state or self.state_goal == SST_CONNECTED))
         this_thread = threading.current_thread()
         try:
             while 1:
@@ -134,11 +134,11 @@ class WebSocketSession(object):
                 self._do_read_loop()
                 # Disconnect.
                 with self:
-                    if not keep_running(): return
+                    if not keep_running(True): return
                     self.state = SST_DISCONNECTING
                 self._do_disconnect()
                 with self:
-                    if not keep_running(): return
+                    if not keep_running(True): return
                     self.state = SST_DISCONNECTED
         finally:
             with self:
