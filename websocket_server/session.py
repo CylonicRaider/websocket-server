@@ -17,18 +17,14 @@ import threading
 from . import client
 from .tools import spawn_daemon_thread, Scheduler
 
-__all__ = ['WebSocketSession']
+__all__ = ['WebSocketSession', 'SST_IDLE', 'SST_DISCONNECTED',
+           'SST_CONNECTING', 'SST_CONNECTED', 'SST_DISCONNECTING']
 
+SST_IDLE          = 'IDLE'
 SST_DISCONNECTED  = 'DISCONNECTED'
 SST_CONNECTING    = 'CONNECTING'
 SST_CONNECTED     = 'CONNECTED'
 SST_DISCONNECTING = 'DISCONNECTING'
-
-_SST_SUCCESSORS = {SST_DISCONNECTED : SST_CONNECTING   ,
-                   SST_CONNECTING   : SST_CONNECTED    ,
-                   SST_CONNECTED    : SST_DISCONNECTING,
-                   SST_DISCONNECTING: SST_DISCONNECTED }
-__all__.extend(_SST_SUCCESSORS)
 
 class WebSocketSession(object):
     """
@@ -49,8 +45,8 @@ class WebSocketSession(object):
     state     : The current connection state as one of the SST_* constants.
                 Reading this attribute is not particularly useful as it might
                 be changed by another thread immediately afterwards.
-    state_goal: The state this session is trying to achieve, as a SST_*
-                constant.
+    state_goal: The state this session is trying to achieve, either
+                SST_DISCONNECTED or SST_CONNECTED.
     conn      : The current WebSocket connection (if any) as a WebSocketFile.
     """
 
@@ -63,7 +59,7 @@ class WebSocketSession(object):
         if scheduler is None: scheduler = Scheduler()
         self.url = url
         self.scheduler = scheduler
-        self.state = SST_DISCONNECTED
+        self.state = SST_IDLE
         self.state_goal = SST_DISCONNECTED
         self.conn = None
         self._cond = threading.Condition()
@@ -99,10 +95,10 @@ class WebSocketSession(object):
             if url is not None:
                 self.url = url
             # Disconnect if told to.
-            if disconnectand and self.state == SST_CONNECTED:
+            if close and self.state == SST_CONNECTED:
                 # Wake up reader thread if it is busy reading messages; it
-                # will eventually detach itself.
-                self._do_disconnect(True)
+                # will eventually detach itself (if necessary).
+                self._do_disconnect(self.conn, True)
             # Connect if told to; this amounts to spawning the reader thread
             # and letting it do its work.
             if connect and self._rthread is None:
@@ -126,55 +122,75 @@ class WebSocketSession(object):
                 with self:
                     if not keep_running(): return
                     self.state = SST_CONNECTING
-                self._do_connect()
+                    params = self._conn_params()
+                conn = self._do_connect(**params)
                 with self:
                     if not keep_running(): return
+                    new_params = self._conn_params()
                     self.state = SST_CONNECTED
-                # Read messages.
-                self._do_read_loop()
+                    self.conn = conn
+                # Read messages (unless we should reconnect immediately).
+                if new_params == params:
+                    self._do_read_loop(conn)
                 # Disconnect.
                 with self:
                     if not keep_running(True): return
                     self.state = SST_DISCONNECTING
-                self._do_disconnect()
+                    self.conn = None
+                self._do_disconnect(conn)
                 with self:
                     if not keep_running(True): return
                     self.state = SST_DISCONNECTED
         finally:
             with self:
                 if self._rthread is this_thread:
-                    if self.conn is not None:
-                        self._do_disconnect()
-                    self.state = SST_DISCONNECTED
+                    self.state = SST_IDLE
+                    self.conn = None
                     self._rthread = None
+            if conn is not None:
+                self._do_disconnect(conn)
 
-    def _do_connect(self):
+    def _conn_params(self):
         """
-        _do_connect() -> None
+        _conn_params() -> dict
 
-        Actually establish a WebSocket connection and store it as an instance
-        variable.
+        Gather the parameters necessary to establish a new connection and
+        return them.
 
-        The URL to connect to is taken from the "url" instance attribute and
-        the resulting WebSocketFile object is stored in the "conn" attribute.
+        The parameters are passed as keyword arguments to _do_connect();
+        subclasses overriding this method must therefore override
+        _do_connect() as well.
+
+        Concurrency note: This method is called with the internal monitor lock
+        held and should therefore finish quickly.
+        """
+        return {'url': self.url}
+
+    def _do_connect(self, url):
+        """
+        _do_connect(url) -> WebSocketFile
+
+        Actually establish a WebSocket connection and return it. url is the
+        WebSocket URL to connect to; overriding methods may specify additional
+        parameters.
 
         Concurrency note: This method is called with no locks held; attribute
-        accesses should be protected via "with self:" as necessary.
+        accesses should be protected via "with self:" as necessary. However,
+        values that require a new connection when they change (such as the
+        URL) should be retrieved in _conn_params() instead; see there for
+        more details.
         """
-        with self:
-            url = self.url
-        conn = client.connect(url)
-        with self:
-            self.conn = conn
+        return client.connect(url)
 
-    def _do_read_loop(self):
+    def _do_read_loop(self, conn):
         """
-        _do_read_loop() -> None
+        _do_read_loop(conn) -> None
 
-        Repeatedly read frames from the underlying WebSocket connection and
-        submit them to the scheduler for processing.
+        Repeatedly read frames from the given WebSocket connection and submit
+        closures processing them via the _handle_raw() method to the
+        scheduler.
         """
-        conn, scheduler = self.conn, self.scheduler
+        scheduler = self.scheduler
         while 1:
             frame = conn.read_frame()
             if frame is None: break
@@ -189,26 +205,19 @@ class WebSocketSession(object):
         """
         pass # NYI
 
-    def _do_disconnect(self, asynchronous=False):
+    def _do_disconnect(self, conn, asynchronous=False):
         """
-        _do_disconnect(asynchronous=False) -> None
+        _do_disconnect(conn, asynchronous=False) -> None
 
-        Actually disconnect the underlying WebSocket connection. asynchronous
-        tells whether this close is initiated from the thread responsible for
-        reading messages (False) or to interrupt a connection ongoing
-        concurrently (True).
-
-        This closes the WebSocketFile stored at the "conn" attribute, and
-        resets the latter to None if asynchronous is false.
+        Actually disconnect the given WebSocket connection. conn is the
+        WebSocket connection to close. asynchronous tells whether this close
+        is initiated from the thread responsible for reading messages (False)
+        or to interrupt a connection ongoing concurrently (True).
 
         Concurrency note: As this method may be called to interrupt an ongoing
         connection, it should be particularly cautious about thread safety.
         """
-        with self:
-            conn = self.conn
-            if not asynchronous: self.conn = None
-        if conn is not None:
-            conn.close(wait=(not asynchronous))
+        conn.close(wait=(not asynchronous))
 
     def connect(self, url=None):
         """
