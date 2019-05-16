@@ -15,7 +15,7 @@ This module is NYI.
 import threading
 
 from . import client
-from .tools import spawn_daemon_thread, Scheduler
+from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 
 __all__ = ['WebSocketSession', 'SST_IDLE', 'SST_DISCONNECTED',
            'SST_CONNECTING', 'SST_CONNECTED', 'SST_DISCONNECTING']
@@ -48,7 +48,15 @@ class WebSocketSession(object):
     state_goal: The state this session is trying to achieve, either
                 SST_DISCONNECTED or SST_CONNECTED.
     conn      : The current WebSocket connection (if any) as a WebSocketFile.
+
+    Class attributes (overridable on instances) are:
+    USE_WTHREAD: Whether a background thread should be created for writing to
+                 the underlying connection. If a thread is present, it is used
+                 regardless of this setting; if it is not, writing operations
+                 are performed by the threads that request them.
     """
+
+    USE_WTHREAD = True
 
     def __init__(self, url, scheduler=None):
         """
@@ -63,9 +71,9 @@ class WebSocketSession(object):
         self.state_goal = SST_DISCONNECTED
         self.conn = None
         self._cond = threading.Condition()
-        self._conn_spinner = MutexBarrier()
         self._scheduler_hold = scheduler.hold()
         self._rthread = None
+        self._wthread = None
 
     def __enter__(self):
         "Context manager entry; internal."
@@ -95,14 +103,21 @@ class WebSocketSession(object):
             if url is not None:
                 self.url = url
             # Disconnect if told to.
-            if close and self.state == SST_CONNECTED:
+            if disconnect and self.state == SST_CONNECTED:
                 # Wake up reader thread if it is busy reading messages; it
-                # will eventually detach itself (if necessary).
-                self._do_disconnect(self.conn, True)
+                # will eventually detach itself (if necessary), and signal
+                # the writer thread to close itself.
+                self._run_wthread(self._do_disconnect, self.conn, True)
             # Connect if told to; this amounts to spawning the reader thread
             # and letting it do its work.
-            if connect and self._rthread is None:
-                self._rthread = spawn_daemon_thread(self._rthread_main)
+            if connect:
+                if self._rthread is None:
+                    self._rthread = spawn_daemon_thread(self._rthread_main)
+                if self._wthread is None and self.USE_WTHREAD:
+                    queue = EOFQueue()
+                    thr = spawn_daemon_thread(self._wthread_main, queue)
+                    thr.queue = queue
+                    self._wthread = thr
 
     def _rthread_main(self):
         """
@@ -116,6 +131,7 @@ class WebSocketSession(object):
             return (self._rthread == this_thread and
                     (ignore_state or self.state_goal == SST_CONNECTED))
         this_thread = threading.current_thread()
+        conn = None
         try:
             while 1:
                 # Connect.
@@ -147,8 +163,34 @@ class WebSocketSession(object):
                     self.state = SST_IDLE
                     self.conn = None
                     self._rthread = None
+                    if self._wthread is not None:
+                        self._wthread.queue.close()
+                        self._wthread = None
             if conn is not None:
                 self._do_disconnect(conn)
+
+    def _wthread_main(self, queue):
+        """
+        _wthread_main(queue) -> None
+
+        Internal method: Main function of the (optional) background thread
+        responsible for writing to the underlying WebSocket.
+
+        queue is an EOFQueue yielding callbacks to be called by this thread.
+        The callbacks take no arguments and their return values are ignored.
+        """
+        this_thread = threading.current_thread()
+        try:
+            while 1:
+                try:
+                    cb = queue.get()
+                except EOFError:
+                    break
+                cb()
+        finally:
+            with self:
+                if self._wthread is this_thread:
+                    self._wthread = None
 
     def _conn_params(self):
         """
@@ -218,6 +260,25 @@ class WebSocketSession(object):
         connection, it should be particularly cautious about thread safety.
         """
         conn.close(wait=(not asynchronous))
+
+    def _run_wthread(self, func, *args, **kwds):
+        """
+        _run_wthread(func, *args, **kwds) -> Future
+
+        Schedule the given callback to be executed in the writer thread, if
+        there is any. If there is no reader thread, func is executed
+        synchronously. args and kwds are passed to func as positional and
+        keyword arguments, respectively; func's return value is wrapped by
+        the returned Future.
+        """
+        ret = Future(lambda: cb(*args, **kwds))
+        with self:
+            wthread_present = (self._wthread is not None)
+            if wthread_present:
+                self._wthread.queue.put(ret.run)
+        if not wthread_present:
+            ret.run()
+        return ret
 
     def connect(self, url=None):
         """
