@@ -16,15 +16,13 @@ from .compat import bytearray, xrange
 
 try: # Py2K
     from urlparse import parse_qsl
-    import thread as _thread
 except ImportError: # Py3K
     from urllib.parse import parse_qsl
-    import _thread
 
 __all__ = ['MONTH_NAMES', 'mask', 'new_mask', 'format_http_date',
            'parse_http_date', 'htmlescape', 'spawn_thread_ex', 'spawn_thread',
            'spawn_daemon_thread', 'CaseDict', 'FormData', 'AtomicSequence',
-           'Scheduler', 'Future', 'EOFQueue', 'MutexBarrier']
+           'Scheduler', 'Future', 'EOFQueue']
 
 # Liberal recognition of the ISO 8601 date-time format used by cookies.py.
 ISO_DATETIME_RE = re.compile(r'^ (\d+) - (\d+) - (\d+) (?:T )?'

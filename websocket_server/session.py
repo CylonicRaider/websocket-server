@@ -271,7 +271,7 @@ class WebSocketSession(object):
         keyword arguments, respectively; func's return value is wrapped by
         the returned Future.
         """
-        ret = Future(lambda: cb(*args, **kwds))
+        ret = Future(lambda: func(*args, **kwds))
         with self:
             wthread_present = (self._wthread is not None)
             if wthread_present:
