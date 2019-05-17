@@ -107,7 +107,9 @@ class WebSocketSession(object):
                 # Wake up reader thread if it is busy reading messages; it
                 # will eventually detach itself (if necessary), and signal
                 # the writer thread to close itself.
-                self._run_wthread(self._do_disconnect, self.conn, True)
+                self._run_wthread(lambda: self._do_disconnect(self.conn,
+                                                              True))
+                self.state = SST_DISCONNECTING
             # Connect if told to; this amounts to spawning the reader thread
             # and letting it do its work.
             if connect:
@@ -261,18 +263,23 @@ class WebSocketSession(object):
         """
         conn.close(wait=(not asynchronous))
 
-    def _run_wthread(self, func, *args, **kwds):
+    def _run_wthread(self, cb, check_state=None):
         """
-        _run_wthread(func, *args, **kwds) -> Future
+        _run_wthread(cb, check_state=None) -> Future or None
 
-        Schedule the given callback to be executed in the writer thread, if
-        there is any. If there is no reader thread, func is executed
-        synchronously. args and kwds are passed to func as positional and
-        keyword arguments, respectively; func's return value is wrapped by
-        the returned Future.
+        Schedule the given callback to be executed in the writer thread. cb
+        is the callback to run. check_state, if not None, indicates that only
+        the given state may be in effect while submitting the callback; if the
+        state does not match, None is returned and cb is not run. Otherwise,
+        this returns a Future wrapping the return value of the callback.
+
+        If there is no reader thread (but check_state is satisfied), cb is
+        executed synchronously.
         """
-        ret = Future(lambda: func(*args, **kwds))
+        ret = Future(cb)
         with self:
+            if check_state is not None and self.state != check_state:
+                return None
             wthread_present = (self._wthread is not None)
             if wthread_present:
                 self._wthread.queue.put(ret.run)
