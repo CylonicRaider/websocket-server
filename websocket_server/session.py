@@ -15,7 +15,7 @@ This module is NYI.
 import threading
 
 from . import client
-from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
+from .tools import spawn_daemon_thread, Future, EOFQueue
 
 __all__ = ['WebSocketSession', 'SST_IDLE', 'SST_DISCONNECTED',
            'SST_CONNECTING', 'SST_CONNECTED', 'SST_DISCONNECTING']
@@ -28,7 +28,7 @@ SST_DISCONNECTING = 'DISCONNECTING'
 
 class WebSocketSession(object):
     """
-    WebSocketSession(url, scheduler=None) -> new instance
+    WebSocketSession(url) -> new instance
 
     A "session" spanning multiple WebSocket connections. url is the WebSocket
     URL to connect to.
@@ -40,8 +40,6 @@ class WebSocketSession(object):
          achieving that).
 
     Read-only instance attributes are:
-    scheduler : The Scheduler instance executing callbacks. If not set via the
-                same-named constructor parameter, a new instance is created.
     state     : The current connection state as one of the SST_* constants.
                 Reading this attribute is not particularly useful as it might
                 be changed by another thread immediately afterwards.
@@ -58,20 +56,18 @@ class WebSocketSession(object):
 
     USE_WTHREAD = True
 
-    def __init__(self, url, scheduler=None):
+    def __init__(self, url):
         """
-        __init__(url, scheduler=None) -> None
+        __init__(url) -> None
 
         Instance initializer; see the class docstring for details.
         """
-        if scheduler is None: scheduler = Scheduler()
         self.url = url
-        self.scheduler = scheduler
         self.state = SST_IDLE
         self.state_goal = SST_DISCONNECTED
         self.conn = None
         self._cond = threading.Condition()
-        self._scheduler_hold = scheduler.hold()
+        self._disconnect_ok = False
         self._rthread = None
         self._wthread = None
 
@@ -83,16 +79,22 @@ class WebSocketSession(object):
         "Context manager exit; internal."
         self._cond.__exit__(*args)
 
-    def _cycle_connstates(self, disconnect=False, connect=False, url=None):
+    def _cycle_connstates(self, disconnect=False, connect=False, url=None,
+                          disconnect_ok=False):
         """
-        _cycle_connstates(disconnect=False, connect=False, url=None) -> None
+        _cycle_connstates(disconnect=False, connect=False, url=None,
+                          disconnect_ok=False) -> None
 
         Internal method backing connect() etc. If disconnect is true, performs
         a disconnect; if connect is true, performs a connect. url, if not
-        None, is stored in the same-named instance attribute. The "state_goal"
-        instance attribute is set to SST_CONNECTED if connect is true,
-        otherwise to SST_DISCONNECTED if disconnect is true, otherwise it is
-        unmodified.
+        None, is stored in the same-named instance attribute. disconnect_ok
+        is only meaningful when disconnect is specified, and tells whether the
+        disconnect is regular (True) or due to some error (False); it is
+        passed on to the corresponding life cycle callbacks.
+
+        The "state_goal" instance attribute is set to SST_CONNECTED if connect
+        is true, otherwise to SST_DISCONNECTED if disconnect is true,
+        otherwise it is unmodified.
         """
         with self:
             # Update attributes.
@@ -102,6 +104,8 @@ class WebSocketSession(object):
                 self.state_goal = SST_DISCONNECTED
             if url is not None:
                 self.url = url
+            if disconnect:
+                self._disconnect_ok = disconnect_ok
             # Disconnect if told to.
             if disconnect and self.state == SST_CONNECTED:
                 # Wake up reader thread if it is busy reading messages; it
@@ -134,6 +138,7 @@ class WebSocketSession(object):
                     (ignore_state or self.state_goal == SST_CONNECTED))
         this_thread = threading.current_thread()
         conn = None
+        transient = False
         try:
             while 1:
                 # Connect.
@@ -141,24 +146,30 @@ class WebSocketSession(object):
                     if not keep_running(): return
                     self.state = SST_CONNECTING
                     params = self._conn_params()
+                self._on_connecting(transient)
                 conn = self._do_connect(**params)
                 with self:
                     if not keep_running(): return
                     new_params = self._conn_params()
                     self.state = SST_CONNECTED
                     self.conn = conn
+                self._on_connected(transient)
                 # Read messages (unless we should reconnect immediately).
                 if new_params == params:
                     self._do_read_loop(conn)
                 # Disconnect.
                 with self:
                     if not keep_running(True): return
+                    transient = (self.state_goal == SST_CONNECTED)
+                    ok = self._disconnect_ok
                     self.state = SST_DISCONNECTING
                     self.conn = None
+                self._on_disconnecting(transient, ok)
                 self._do_disconnect(conn)
                 with self:
                     if not keep_running(True): return
                     self.state = SST_DISCONNECTED
+                self._on_disconnected(transient, ok)
         finally:
             with self:
                 if self._rthread is this_thread:
@@ -230,24 +241,13 @@ class WebSocketSession(object):
         """
         _do_read_loop(conn) -> None
 
-        Repeatedly read frames from the given WebSocket connection and submit
-        closures processing them via the _handle_raw() method to the
-        scheduler.
+        Repeatedly read frames from the given WebSocket connection and pass
+        them into _on_message; on EOF, return (without calling _on_message).
         """
-        scheduler = self.scheduler
         while 1:
             frame = conn.read_frame()
             if frame is None: break
-            scheduler.add_now(lambda f=frame: self._handle_raw(f))
-
-    def _handle_raw(self, frame):
-        """
-        _handle_raw(frame) -> None
-
-        Handle a frame received from the WebSocket. This method is invoked in
-        the scheduler.
-        """
-        pass # NYI
+            self._on_message(frame)
 
     def _do_disconnect(self, conn, asynchronous=False):
         """
@@ -287,6 +287,57 @@ class WebSocketSession(object):
             ret.run()
         return ret
 
+    def _on_connecting(self, transient):
+        """
+        _on_connecting(transient) -> None
+
+        Callback invoked before a connection is established. transient tells
+        whether this is part of a reconnect (True) or an "initial" connect
+        (False).
+        """
+        pass
+
+    def _on_connected(self, transient):
+        """
+        _on_connect(transient) -> None
+
+        Callback invoked when a connection is established. transient tells
+        whether this is part of a reconnect (True) or an "initial" connect
+        (False).
+        """
+        pass
+
+    def _on_message(self, msg):
+        """
+        _on_message(msg) -> None
+
+        Callback invoked when a WebSocket message arrives. msg is a
+        wsfile.Message containing the data that were received.
+        """
+        pass
+
+    def _on_disconnecting(self, transient, ok):
+        """
+        _on_disconnecting(transient, ok) -> None
+
+        Callback invoked when a connection is about to be closed. transient
+        tells whether this is part of a reconnect (True) or a "final" close
+        (False); ok tells whether the disconnect was "regular" (True) rather
+        than caused by some sort of error (False).
+        """
+        pass
+
+    def _on_disconnected(self, transient, ok):
+        """
+        _on_disconnect(transient, ok) -> None
+
+        Callback invoked when a connection has been closed. transient tells
+        whether this is part of a reconnect (True) or a "final" close (False);
+        ok tells whether the disconnect was "regular" (True) rather than
+        caused by some sort of error (False).
+        """
+        pass
+
     def connect(self, url=None):
         """
         connect(url=None) -> None
@@ -308,22 +359,25 @@ class WebSocketSession(object):
         """
         self._cycle_connstates(connect=True, url=url)
 
-    def reconnect(self, url=None):
+    def reconnect(self, url=None, ok=True):
         """
-        reconnect(url=None) -> None
+        reconnect(url=None, ok=True) -> None
 
         Bring this session into the "connected" state, forcing a
-        disconnect-connect cycle if it is already connected. See the notes for
-        connect() for more details.
+        disconnect-connect cycle if it is already connected.
+
+        See the notes for disconnect() and connect() for more details.
         """
         self._cycle_connstates(disconnect=True, connect=True, url=url)
 
-    def disconnect(self):
+    def disconnect(self, ok=True):
         """
-        disconnect() -> None
+        disconnect(ok=True) -> None
 
         Bring this session into the "disconnected" state, closing the internal
-        WebSocket connection if necessary. See the notes for connect() (but
-        in reverse) for more details.
+        WebSocket connection if necessary. ok tells whether the close is
+        normal (True) or caused by some sort of error (False).
+
+        See the notes for connect() (but in reverse) for more details.
         """
         self._cycle_connstates(disconnect=True)
