@@ -18,13 +18,18 @@ from . import client
 from .tools import spawn_daemon_thread, Future, EOFQueue
 
 __all__ = ['WebSocketSession', 'SST_IDLE', 'SST_DISCONNECTED',
-           'SST_CONNECTING', 'SST_CONNECTED', 'SST_DISCONNECTING']
+           'SST_CONNECTING', 'SST_CONNECTED', 'SST_INTERRUPTED',
+           'SST_DISCONNECTING', 'ERRS_RTHREAD', 'ERRS_WTHREAD']
 
 SST_IDLE          = 'IDLE'
 SST_DISCONNECTED  = 'DISCONNECTED'
 SST_CONNECTING    = 'CONNECTING'
 SST_CONNECTED     = 'CONNECTED'
+SST_INTERRUPTED   = 'INTERRUPTED'
 SST_DISCONNECTING = 'DISCONNECTING'
+
+ERRS_RTHREAD = 'rthread'
+ERRS_WTHREAD = 'wthread'
 
 class WebSocketSession(object):
     """
@@ -113,7 +118,7 @@ class WebSocketSession(object):
                 # the writer thread to close itself.
                 self._run_wthread(lambda: self._do_disconnect(self.conn,
                                                               True))
-                self.state = SST_DISCONNECTING
+                self.state = SST_INTERRUPTED
             # Connect if told to; this amounts to spawning the reader thread
             # and letting it do its work.
             if connect:
@@ -143,23 +148,23 @@ class WebSocketSession(object):
             while 1:
                 # Connect.
                 with self:
-                    if not keep_running(): return
+                    if not keep_running(): break
                     self.state = SST_CONNECTING
                     params = self._conn_params()
                 self._on_connecting(transient)
                 conn = self._do_connect(**params)
                 with self:
-                    if not keep_running(): return
                     new_params = self._conn_params()
                     self.state = SST_CONNECTED
                     self.conn = conn
+                    self._disconnect_ok = True
                 self._on_connected(transient)
                 # Read messages (unless we should reconnect immediately).
                 if new_params == params:
                     self._do_read_loop(conn)
                 # Disconnect.
                 with self:
-                    if not keep_running(True): return
+                    if not keep_running(True): break
                     transient = (self.state_goal == SST_CONNECTED)
                     ok = self._disconnect_ok
                     self.state = SST_DISCONNECTING
@@ -167,9 +172,10 @@ class WebSocketSession(object):
                 self._on_disconnecting(transient, ok)
                 self._do_disconnect(conn)
                 with self:
-                    if not keep_running(True): return
                     self.state = SST_DISCONNECTED
                 self._on_disconnected(transient, ok)
+        except Exception as exc:
+            self._on_error(exc, ERRS_RTHREAD)
         finally:
             with self:
                 if self._rthread is this_thread:
@@ -200,6 +206,8 @@ class WebSocketSession(object):
                 except EOFError:
                     break
                 cb()
+        except Exception as exc:
+            self._on_error(exc, ERRS_WTHREAD)
         finally:
             with self:
                 if self._wthread is this_thread:
@@ -337,6 +345,19 @@ class WebSocketSession(object):
         caused by some sort of error (False).
         """
         pass
+
+    def _on_error(self, exc, source):
+        """
+        _on_error(exc, source) -> None
+
+        Callback invoked when an error occurs somewhere. exc is the exception
+        object (sys.exc_info() can be used to retrieve more information about
+        the error); source is a ERRS_* constant indicating in which component
+        the error originated.
+
+        The default implementation re-raises the exception.
+        """
+        raise
 
     def connect(self, url=None):
         """
