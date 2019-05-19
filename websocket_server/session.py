@@ -72,9 +72,10 @@ class WebSocketSession(object):
         self.state_goal = SST_DISCONNECTED
         self.conn = None
         self._cond = threading.Condition()
-        self._disconnect_ok = False
         self._rthread = None
         self._wthread = None
+        self._wqueue = None
+        self._disconnect_ok = False
 
     def __enter__(self):
         "Context manager entry; internal."
@@ -101,6 +102,10 @@ class WebSocketSession(object):
         is true, otherwise to SST_DISCONNECTED if disconnect is true,
         otherwise it is unmodified.
         """
+        def disconnect_cb():
+            self._on_disconnecting(connect, disconnect_ok)
+            self._do_disconnect(disconnect_conn, True)
+        disconnect_conn = None
         with self:
             # Update attributes.
             if connect:
@@ -113,22 +118,20 @@ class WebSocketSession(object):
                 self._disconnect_ok = disconnect_ok
             # Disconnect if told to.
             if disconnect and self.state == SST_CONNECTED:
-                # Wake up reader thread if it is busy reading messages; it
-                # will eventually detach itself (if necessary), and signal
-                # the writer thread to close itself.
-                self._run_wthread(lambda: self._do_disconnect(self.conn,
-                                                              True))
                 self.state = SST_INTERRUPTED
+                # Ensure the reader thread will be eventually woken.
+                disconnect_conn = self.conn
             # Connect if told to; this amounts to spawning the reader thread
             # and letting it do its work.
             if connect:
                 if self._rthread is None:
                     self._rthread = spawn_daemon_thread(self._rthread_main)
                 if self._wthread is None and self.USE_WTHREAD:
-                    queue = EOFQueue()
-                    thr = spawn_daemon_thread(self._wthread_main, queue)
-                    thr.queue = queue
-                    self._wthread = thr
+                    self._wqueue = EOFQueue()
+                    self._wthread = spawn_daemon_thread(self._wthread_main,
+                                                        self._wqueue)
+        if disconnect_conn is not None:
+            self._run_wthread(disconnect_cb)
 
     def _rthread_main(self):
         """
@@ -137,56 +140,67 @@ class WebSocketSession(object):
         Internal method: Outermost code of the background thread responsible
         for reading WebSocket messages.
         """
-        def keep_running(ignore_state=False):
-            "Return whether this reader thread should keep running."
-            return (self._rthread == this_thread and
-                    (ignore_state or self.state_goal == SST_CONNECTED))
+        def detach(do_disconnect=True):
+            "Clean up instance state pointing at the existence of this thread"
+            with self:
+                if self._rthread is not this_thread: return
+                self.state = SST_IDLE
+                self._rthread = None
+                self.conn = None
+                if self._wthread is not None:
+                    self._wqueue.close()
+                    self._wthread = None
+                    self._wqueue = None
+            if conn is not None and do_disconnect:
+                self._do_disconnect(conn)
         this_thread = threading.current_thread()
         conn = None
         transient = False
         try:
             while 1:
-                # Connect.
+                # Prepare for connecting or detach.
                 with self:
-                    if not keep_running(): break
+                    # Detach if requested.
+                    if self.state_goal != SST_CONNECTED:
+                        detach(False)
+                        break
                     self.state = SST_CONNECTING
                     params = self._conn_params()
+                # Connect.
                 self._on_connecting(transient)
                 conn = self._do_connect(**params)
                 with self:
                     new_params = self._conn_params()
+                    do_read = (new_params == params)
+                    if self.state_goal == SST_CONNECTED:
+                        self._disconnect_ok = True
+                    else:
+                        do_read = False
                     self.state = SST_CONNECTED
                     self.conn = conn
-                    self._disconnect_ok = True
                 self._on_connected(transient)
-                # Read messages (unless we should reconnect immediately).
-                if new_params == params:
+                # Read messages (unless we should disconnect immediately).
+                if do_read:
                     self._do_read_loop(conn)
-                # Disconnect.
+                # Prepare for disconnecting.
                 with self:
-                    if not keep_running(True): break
+                    run_dc_hook = (self.state != SST_INTERRUPTED)
                     transient = (self.state_goal == SST_CONNECTED)
                     ok = self._disconnect_ok
                     self.state = SST_DISCONNECTING
                     self.conn = None
-                self._on_disconnecting(transient, ok)
+                # Disconnect.
+                if run_dc_hook:
+                    self._on_disconnecting(transient, ok)
                 self._do_disconnect(conn)
+                conn = None
                 with self:
                     self.state = SST_DISCONNECTED
                 self._on_disconnected(transient, ok)
         except Exception as exc:
             self._on_error(exc, ERRS_RTHREAD)
         finally:
-            with self:
-                if self._rthread is this_thread:
-                    self.state = SST_IDLE
-                    self.conn = None
-                    self._rthread = None
-                    if self._wthread is not None:
-                        self._wthread.queue.close()
-                        self._wthread = None
-            if conn is not None:
-                self._do_disconnect(conn)
+            detach()
 
     def _wthread_main(self, queue):
         """
@@ -288,10 +302,10 @@ class WebSocketSession(object):
         with self:
             if check_state is not None and self.state != check_state:
                 return None
-            wthread_present = (self._wthread is not None)
-            if wthread_present:
-                self._wthread.queue.put(ret.run)
-        if not wthread_present:
+            queue = self._wqueue
+            if queue is not None:
+                queue.put(ret.run)
+        if queue is None:
             ret.run()
         return ret
 
