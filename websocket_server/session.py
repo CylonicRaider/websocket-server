@@ -12,14 +12,16 @@ endpoint, retrying commands whose results may have been missed, etc.
 This module is NYI.
 """
 
+import time
 import threading
 
 from . import client
 from .tools import spawn_daemon_thread, Future, EOFQueue
 
-__all__ = ['WebSocketSession', 'SST_IDLE', 'SST_DISCONNECTED',
-           'SST_CONNECTING', 'SST_CONNECTED', 'SST_INTERRUPTED',
-           'SST_DISCONNECTING', 'ERRS_RTHREAD', 'ERRS_WTHREAD']
+__all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
+           'SST_INTERRUPTED', 'SST_DISCONNECTING', 'ERRS_RTHREAD',
+           'ERRS_CONNECT', 'ERRS_READ', 'ERRS_WRITE', 'backoff_constant',
+           'backoff_linear', 'backoff_exponential', 'WebSocketSession']
 
 SST_IDLE          = 'IDLE'
 SST_DISCONNECTED  = 'DISCONNECTED'
@@ -29,20 +31,61 @@ SST_INTERRUPTED   = 'INTERRUPTED'
 SST_DISCONNECTING = 'DISCONNECTING'
 
 ERRS_RTHREAD = 'rthread'
-ERRS_WTHREAD = 'wthread'
+ERRS_CONNECT = 'connect'
+ERRS_READ    = 'read'
+ERRS_WRITE   = 'write'
+
+def backoff_constant(n):
+    """
+    backoff_constant(n) -> float
+
+    Linear backoff implementation. This returns the constant 1.
+
+    See WebSocketSession for details.
+    """
+    return 1
+
+def backoff_linear(n):
+    """
+    backoff_linear(n) -> float
+
+    Quadratic backoff implementation. This returns n.
+
+    See WebSocketSession for details.
+    """
+    return n
+
+def backoff_exponential(n):
+    """
+    backoff_exponential(n) -> float
+
+    Exponential backoff implementation. This returns 2 ** n.
+
+    See WebSocketSession for details.
+    """
+    return 2 ** n
 
 class WebSocketSession(object):
     """
-    WebSocketSession(url) -> new instance
+    WebSocketSession(url, backoff=None) -> new instance
 
     A "session" spanning multiple WebSocket connections. url is the WebSocket
-    URL to connect to.
+    URL to connect to; backoff is the backoff algorithm to use (see below),
+    defaulting to the module-level backoff_linear() function.
 
     Instance attributes are:
-    url: The URL to connect to. Initialized from the same-named constructor
-         parameter. May be modified after instance creation to cause future
-         connections to use that URL (but see reconnect() for a safer way of
-         achieving that).
+    url    : The URL to connect to. Initialized from the same-named
+             constructor parameter. May be modified after instance creation to
+             cause future connections to use that URL (but see reconnect() for
+             a safer way of achieving that).
+    backoff: The connection backoff algorithm to use. Initialized from the
+             same-named constructor parameter. This is a function mapping an
+             integer to a floating value; the parameter is the (zero-based)
+             index of the current connection attempt (that has failed), while
+             the return value is the time (in seconds) to wait until the next
+             connection attempt. The index is reset when a connection attempt
+             succeeds. The backoff_*() module-level functions provide a few
+             ready-to-use implementations to plug into this.
 
     Read-only instance attributes are:
     state     : The current connection state as one of the SST_* constants.
@@ -61,13 +104,15 @@ class WebSocketSession(object):
 
     USE_WTHREAD = True
 
-    def __init__(self, url):
+    def __init__(self, url, backoff=None):
         """
-        __init__(url) -> None
+        __init__(url, backoff=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
+        if backoff is None: backoff = backoff_linear
         self.url = url
+        self.backoff = backoff
         self.state = SST_IDLE
         self.state_goal = SST_DISCONNECTED
         self.conn = None
@@ -84,6 +129,26 @@ class WebSocketSession(object):
     def __exit__(self, *args):
         "Context manager exit; internal."
         self._cond.__exit__(*args)
+
+    def _sleep(self, timeout, check=None):
+        """
+        _sleep(timeout, check=None) -> None
+
+        Wait for a specified time while some condition holds. timeout is the
+        time to wait for in (potentially fractional) seconds; check is a
+        function taking no arguments and returning whether to continue
+        sleeping, defaulting to always sleeping on.
+
+        The sleep is based on the internal condition variable and can be
+        interrupted by notifying it.
+        """
+        if check is None: check = lambda: True
+        deadline = time.time() + check
+        with self:
+            while check():
+                now = time.time()
+                if now > deadline: break
+                self._cond.wait(deadline - now)
 
     def _cycle_connstates(self, disconnect=False, connect=False, url=None,
                           disconnect_ok=False):
@@ -117,10 +182,14 @@ class WebSocketSession(object):
             if disconnect:
                 self._disconnect_ok = disconnect_ok
             # Disconnect if told to.
-            if disconnect and self.state == SST_CONNECTED:
-                self.state = SST_INTERRUPTED
-                # Ensure the reader thread will be eventually woken.
-                disconnect_conn = self.conn
+            if disconnect:
+                if self.state == SST_CONNECTING:
+                    # Wake up potentially sleeping reader thread.
+                    self._cond.notifyAll()
+                elif self.state == SST_CONNECTED:
+                    self.state = SST_INTERRUPTED
+                    # Ensure the reader thread will be eventually woken.
+                    disconnect_conn = self.conn
             # Connect if told to; this amounts to spawning the reader thread
             # and letting it do its work.
             if connect:
@@ -153,9 +222,13 @@ class WebSocketSession(object):
                     self._wqueue = None
             if conn is not None and do_disconnect:
                 self._do_disconnect(conn)
+        def sleep_check():
+            # Run in an implicit "with self:" block.
+            return (self.state_goal == SST_CONNECTED)
         this_thread = threading.current_thread()
         conn = None
         transient = False
+        conn_attempt = 0
         try:
             while 1:
                 # Prepare for connecting or detach.
@@ -168,7 +241,15 @@ class WebSocketSession(object):
                     params = self._conn_params()
                 # Connect.
                 self._on_connecting(transient)
-                conn = self._do_connect(**params)
+                try:
+                    conn = self._do_connect(**params)
+                except Exception as exc:
+                    self._on_error(exc, ERRS_CONNECT, True)
+                    self._sleep(self.backoff(conn_attempt), sleep_check)
+                    conn_attempt += 1
+                    continue
+                else:
+                    conn_attempt = 0
                 with self:
                     new_params = self._conn_params()
                     do_read = (new_params == params)
@@ -219,9 +300,10 @@ class WebSocketSession(object):
                     cb = queue.get()
                 except EOFError:
                     break
-                cb()
-        except Exception as exc:
-            self._on_error(exc, ERRS_WTHREAD)
+                try:
+                    cb()
+                except Exception as exc:
+                    self._on_error(exc, ERRS_WRITE)
         finally:
             with self:
                 if self._wthread is this_thread:
@@ -267,7 +349,10 @@ class WebSocketSession(object):
         them into _on_message; on EOF, return (without calling _on_message).
         """
         while 1:
-            frame = conn.read_frame()
+            try:
+                frame = conn.read_frame()
+            except Exception as exc:
+                self._on_error(exc, ERRS_READ)
             if frame is None: break
             self._on_message(frame)
 
@@ -360,18 +445,22 @@ class WebSocketSession(object):
         """
         pass
 
-    def _on_error(self, exc, source):
+    def _on_error(self, exc, source, swallow=False):
         """
-        _on_error(exc, source) -> None
+        _on_error(exc, source, swallow=False) -> None
 
         Callback invoked when an error occurs somewhere. exc is the exception
         object (sys.exc_info() can be used to retrieve more information about
         the error); source is a ERRS_* constant indicating in which component
-        the error originated.
+        the error originated; swallow tells whether the exception should be
+        suppressed (rather than being re-raised).
 
-        The default implementation re-raises the exception.
+        The default implementation does nothing aside from re-raising the
+        exception (if told to); other implementations could make more
+        fine-grained decisions based on, e.g., the type of the exception and
+        the source.
         """
-        raise
+        if not swallow: raise
 
     def connect(self, url=None):
         """
