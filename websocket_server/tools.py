@@ -669,25 +669,28 @@ class Scheduler(object):
 
 class Future(object):
     """
-    Future(cb, lock=None) -> new instance
+    Future(cb=None, lock=None) -> new instance
 
     A wrapper around an object that may have yet to be computed. The
-    computation of the object is represented by the callable cb, which is
-    called with no arguments and returns the computed object. lock, if not
-    None, specifies the lock to synchronize internal operations on (defaulting
-    to a new lock of an appropriate type).
+    computation of the object is either represented by the callable cb, which
+    is called with no arguments and returns the computed object; or happens
+    outside this Future with the result assigned via the set() method (if cb
+    is None). lock, if not None, specifies the lock to synchronize internal
+    operations on (defaulting to a new lock of an appropriate type).
 
     Additional read-only instance attributes are:
     value: The object enclosed by this Future, or None is not computed yet.
     state: The computation state of this Future (one of the ST_PENDING ->
-           ST_COMPUTING -> ST_DONE constants). Note that reading this is
-           probably of little use since the value might change immediately
-           after accessing it.
+           ST_COMPUTING -> ST_DONE constants). Note that the value might
+           change immediately after being accessed. See also the pending()
+           method.
     """
 
     ST_PENDING   = 'PENDING'
     ST_COMPUTING = 'COMPUTING'
     ST_DONE      = 'DONE'
+
+    _PENDING_MAP = {ST_PENDING: True, ST_COMPUTING: Ellipsis, ST_DONE: False}
 
     class Timeout(Exception):
         """
@@ -695,9 +698,20 @@ class Future(object):
         succeed.
         """
 
-    def __init__(self, cb, lock=None):
+    @classmethod
+    def resolved(cls, value=None):
         """
-        __init__(cb, lock=None) -> None
+        resolved(value=None) -> new instance
+
+        Return a Future that is already resolved to the given value.
+        """
+        ret = cls()
+        ret.set(value)
+        return ret
+
+    def __init__(self, cb=None, lock=None):
+        """
+        __init__(cb=None, lock=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
@@ -708,18 +722,45 @@ class Future(object):
 
     def run(self):
         """
-        run() -> None
+        run() -> bool or Ellipsis
 
-        Compute the value wrapped by this Future (if that has not happened
-        yet).
+        Compute the value wrapped by this Future if possible. Returns True
+        when the computation has finished, or the (truthy) Ellipsis if the
+        computation is going on concurrently, or False if there is no stored
+        callback to run.
         """
         with self._cond:
-            if self._state != self.ST_PENDING: return
+            if self._state == self.ST_DONE:
+                return True
+            elif self._state == self.ST_COMPUTING:
+                return Ellipsis
+            elif self.cb is None:
+                return False
             self._state = self.ST_COMPUTING
-        self.value = self.cb()
+        v = self.cb()
         with self._cond:
             self._state = self.ST_DONE
+            self.value = v
             self._cond.notifyAll()
+            return True
+
+    def pending(self):
+        """
+        pending() -> bool or Ellipsis
+
+        Return whether this Future is still pending. The return value is one
+        of
+        True     if the Future is pending (and not being computed
+                 concurrently),
+        Ellipsis if the Future is not done (and being computed concurrently;
+                 remark that Ellipsis is truthy), or
+        False    if the Future is fully resolved.
+
+        NOTE that the state queried by this method might change immediately
+             after it has been called.
+        """
+        with self._cond:
+            return self._PENDING_MAP[self._state]
 
     def get(self, default=None):
         """
@@ -731,6 +772,26 @@ class Future(object):
         with self._cond:
             return self.value if self._state == self.ST_DONE else default
 
+    def set(self, value=None):
+        """
+        set(value=None) -> bool
+
+        Explicitly store an object in this Future. value is the value to
+        store. Returns whether setting the Future's value succeeded (i.e.
+        whether the value was not already there and there was no computation
+        of the it running concurrently).
+
+        If value is omitted, this still wakes up all threads waiting for some
+        value to be computed; this allows using Future as a one-shot
+        equivalent of the threading.Event class.
+        """
+        with self._cond:
+            if self.state != self.ST_PENDING: return False
+            self.value = value
+            self.state = self.ST_DONE
+            self._cond.notifyAll()
+            return True
+
     def wait(self, timeout=None, run=False):
         """
         wait(timeout=None, run=False) -> object
@@ -740,14 +801,14 @@ class Future(object):
         (in potentially fractional seconds); if the value is not available
         when the timeout expires, a Timeout exception is raised. If run is
         true, this computes the value (in this thread) unless that is already
-        happening elsewhere. It is an error to specify a non-None timeout and
-        run=True; this class cannot guarantee that the computation will honor
-        the timeout.
+        happening elsewhere; if there is no stored callback, run is ignored.
+        It is an error to specify a non-None timeout and run=True; this class
+        cannot guarantee that the computation will honor the timeout.
         """
         with self._cond:
             if self._state == self.ST_DONE:
                 return self.value
-            elif not run:
+            elif not run or self.cb is None:
                 if timeout is None:
                     while self._state != self.ST_DONE:
                         self._cond.wait()
