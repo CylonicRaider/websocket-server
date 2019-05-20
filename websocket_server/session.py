@@ -120,6 +120,8 @@ class WebSocketSession(object):
         self._rthread = None
         self._wthread = None
         self._wqueue = None
+        self._connected = None
+        self._disconnected = None
         self._disconnect_ok = False
 
     def __enter__(self):
@@ -154,14 +156,16 @@ class WebSocketSession(object):
                           disconnect_ok=False):
         """
         _cycle_connstates(disconnect=False, connect=False, url=None,
-                          disconnect_ok=False) -> None
+                          disconnect_ok=False) -> Future
 
         Internal method backing connect() etc. If disconnect is true, performs
         a disconnect; if connect is true, performs a connect. url, if not
         None, is stored in the same-named instance attribute. disconnect_ok
         is only meaningful when disconnect is specified, and tells whether the
         disconnect is regular (True) or due to some error (False); it is
-        passed on to the corresponding life cycle callbacks.
+        passed on to the corresponding life cycle callbacks. Returns a Future
+        that will resolve (to some unspecified value) when the requested
+        operations are done (which may be immediately).
 
         The "state_goal" instance attribute is set to SST_CONNECTED if connect
         is true, otherwise to SST_DISCONNECTED if disconnect is true,
@@ -172,11 +176,25 @@ class WebSocketSession(object):
             self._do_disconnect(disconnect_conn, True)
         disconnect_conn = None
         with self:
-            # Update attributes.
+            # Update attributes; prepare return value.
             if connect:
                 self.state_goal = SST_CONNECTED
+                if self.state == SST_CONNECTED:
+                    ret = Future.resolved()
+                else:
+                    if self._connected is None:
+                        self._connected = Future()
+                    ret = self._connected
             elif disconnect:
                 self.state_goal = SST_DISCONNECTED
+                if self.state == SST_DISCONNECTED:
+                    ret = Future.resolved()
+                else:
+                    if self._disconnected is None:
+                        self._disconnected = Future()
+                    ret = self._disconnected
+            else:
+                ret = Future.resolved()
             if url is not None:
                 self.url = url
             if disconnect:
@@ -201,6 +219,7 @@ class WebSocketSession(object):
                                                         self._wqueue)
         if disconnect_conn is not None:
             self._run_wthread(disconnect_cb)
+        return ret
 
     def _rthread_main(self):
         """
@@ -238,6 +257,8 @@ class WebSocketSession(object):
                         detach(False)
                         break
                     self.state = SST_CONNECTING
+                    if self._connected is None:
+                        self._connected = Future()
                     params = self._conn_params()
                 # Connect.
                 self._on_connecting(transient)
@@ -250,6 +271,7 @@ class WebSocketSession(object):
                     continue
                 else:
                     conn_attempt = 0
+                # Done connecting.
                 with self:
                     new_params = self._conn_params()
                     do_read = (new_params == params)
@@ -259,6 +281,8 @@ class WebSocketSession(object):
                         do_read = False
                     self.state = SST_CONNECTED
                     self.conn = conn
+                    self._connected.set()
+                    self._connected = None
                 self._on_connected(transient)
                 # Read messages (unless we should disconnect immediately).
                 if do_read:
@@ -270,13 +294,18 @@ class WebSocketSession(object):
                     ok = self._disconnect_ok
                     self.state = SST_DISCONNECTING
                     self.conn = None
+                    if self._disconnected is None:
+                        self._disconnected = Future()
                 # Disconnect.
                 if run_dc_hook:
                     self._on_disconnecting(transient, ok)
                 self._do_disconnect(conn)
                 conn = None
+                # Done disconnecting.
                 with self:
                     self.state = SST_DISCONNECTED
+                    self._disconnected.set()
+                    self._disconnected = None
                 self._on_disconnected(transient, ok)
         except Exception as exc:
             self._on_error(exc, ERRS_RTHREAD)
@@ -462,7 +491,50 @@ class WebSocketSession(object):
         """
         if not swallow: raise
 
-    def connect(self, url=None):
+    def connect_async(self, url=None):
+        """
+        disconnect_async(url=None) -> Future
+
+        Bring this session into the "connected" state, creating a WebSocket
+        connection as necessary.
+
+        This is the asynchronous version of connect(); see there for more
+        details. This method returns while the actual connection attempt
+        proceeds in the background; in order to wait for the connection to
+        complete, wait() on the returned Future.
+        """
+        return self._cycle_connstates(connect=True, url=url)
+
+    def reconnect_async(self, url=None, ok=True):
+        """
+        reconnect_async(url=None, ok=True) -> Future
+
+        Bring this session into the "connected" state, forcing a
+        disconnect-connect cycle if it is already connected.
+
+        This is the asynchronous version of reconnect(); see there for more
+        details. This method returns while the actual operation proceeds in
+        the background; in order to wait for it to complete, wait() on the
+        returned Future.
+        """
+        return self._cycle_connstates(disconnect=True, connect=True, url=url,
+                                      disconnect_ok=ok)
+
+    def disconnect_async(self, ok=True):
+        """
+        disconnect(ok=True) -> Future
+
+        Bring this session into the "disconnected" state, closing the internal
+        WebSocket connection if necessary.
+
+        This is the asynchronous version of disconnect(); see there for more
+        details. This method returns while the actual disconnect proceeds in
+        the background; in order to wait for the disconnect to complete,
+        wait() on the returned Future.
+        """
+        return self._cycle_connstates(disconnect=True, disconnect_ok=ok)
+
+    def connect(self, *args, **kwds):
         """
         connect(url=None) -> None
 
@@ -480,28 +552,34 @@ class WebSocketSession(object):
         submitted in rapid succession, the effects of individual calls may be
         superseded by others or elided. Eventually, the last call (i.e. the
         last to acquire the internal synchronization lock) will prevail.
-        """
-        self._cycle_connstates(connect=True, url=url)
 
-    def reconnect(self, url=None, ok=True):
+        This is the blocking version of connect_async().
+        """
+        return self.connect_async(*args, **kwds).wait()
+
+    def reconnect(self, *args, **kwds):
         """
         reconnect(url=None, ok=True) -> None
 
         Bring this session into the "connected" state, forcing a
         disconnect-connect cycle if it is already connected.
 
-        See the notes for disconnect() and connect() for more details.
+        See the notes for disconnect() and connect() for more details. This is
+        the blocking version of reconnect_async().
         """
-        self._cycle_connstates(disconnect=True, connect=True, url=url)
+        return self.reconnect_async(*args, **kwds).wait()
 
-    def disconnect(self, ok=True):
+    def disconnect(self, *args, **kwds):
         """
         disconnect(ok=True) -> None
 
         Bring this session into the "disconnected" state, closing the internal
-        WebSocket connection if necessary. ok tells whether the close is
-        normal (True) or caused by some sort of error (False).
+        WebSocket connection if necessary.
 
-        See the notes for connect() (but in reverse) for more details.
+        ok tells whether the close is normal (True) or caused by some sort of
+        error (False).
+
+        See the notes for connect() (but in reverse) for more details. This is
+        the blocking version of disconnect_async().
         """
-        self._cycle_connstates(disconnect=True)
+        return self.disconnect_async(*args, **kwds).wait()
