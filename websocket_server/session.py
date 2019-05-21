@@ -100,6 +100,10 @@ class WebSocketSession(object):
                  the underlying connection. If a thread is present, it is used
                  regardless of this setting; if it is not, writing operations
                  are performed by the threads that request them.
+
+    Error handling note: The on_*() callback methods are not shielded against
+    errors in overridden implementations; exceptions raised in them may bring
+    the connection into an inconsistent state.
     """
 
     USE_WTHREAD = True
@@ -172,7 +176,7 @@ class WebSocketSession(object):
         otherwise it is unmodified.
         """
         def disconnect_cb():
-            self._on_disconnecting(connect, disconnect_ok)
+            self.on_disconnecting(connect, disconnect_ok)
             self._do_disconnect(disconnect_conn, True)
         disconnect_conn = None
         with self:
@@ -261,11 +265,11 @@ class WebSocketSession(object):
                         self._connected = Future()
                     params = self._conn_params()
                 # Connect.
-                self._on_connecting(transient)
+                self.on_connecting(transient)
                 try:
                     conn = self._do_connect(**params)
                 except Exception as exc:
-                    self._on_error(exc, ERRS_CONNECT, True)
+                    self.on_error(exc, ERRS_CONNECT, True)
                     self._sleep(self.backoff(conn_attempt), sleep_check)
                     conn_attempt += 1
                     continue
@@ -283,7 +287,7 @@ class WebSocketSession(object):
                     self.conn = conn
                     self._connected.set()
                     self._connected = None
-                self._on_connected(transient)
+                self.on_connected(transient)
                 # Read messages (unless we should disconnect immediately).
                 if do_read:
                     self._do_read_loop(conn)
@@ -298,7 +302,7 @@ class WebSocketSession(object):
                         self._disconnected = Future()
                 # Disconnect.
                 if run_dc_hook:
-                    self._on_disconnecting(transient, ok)
+                    self.on_disconnecting(transient, ok)
                 self._do_disconnect(conn)
                 conn = None
                 # Done disconnecting.
@@ -306,9 +310,9 @@ class WebSocketSession(object):
                     self.state = SST_DISCONNECTED
                     self._disconnected.set()
                     self._disconnected = None
-                self._on_disconnected(transient, ok)
+                self.on_disconnected(transient, ok)
         except Exception as exc:
-            self._on_error(exc, ERRS_RTHREAD)
+            self.on_error(exc, ERRS_RTHREAD)
         finally:
             detach()
 
@@ -332,7 +336,7 @@ class WebSocketSession(object):
                 try:
                     cb()
                 except Exception as exc:
-                    self._on_error(exc, ERRS_WRITE)
+                    self.on_error(exc, ERRS_WRITE)
         finally:
             with self:
                 if self._wthread is this_thread:
@@ -375,15 +379,27 @@ class WebSocketSession(object):
         _do_read_loop(conn) -> None
 
         Repeatedly read frames from the given WebSocket connection and pass
-        them into _on_message; on EOF, return (without calling _on_message).
+        them into on_message; on EOF, return (without calling on_message).
         """
         while 1:
             try:
                 frame = conn.read_frame()
             except Exception as exc:
-                self._on_error(exc, ERRS_READ)
+                self.on_error(exc, ERRS_READ)
             if frame is None: break
-            self._on_message(frame)
+            self.on_message(frame)
+
+    def _do_send(self, conn, data):
+        """
+        _do_send(conn, data) -> None
+
+        Backend of the send_message() method. This (synchronously) submits
+        data into the WebSocketFile conn using an appropriate frame type.
+        """
+        if isinstance(data, bytes):
+            conn.write_binary_frame(data)
+        else:
+            conn.write_text_frame(data)
 
     def _do_disconnect(self, conn, asynchronous=False):
         """
@@ -423,9 +439,9 @@ class WebSocketSession(object):
             ret.run()
         return ret
 
-    def _on_connecting(self, transient):
+    def on_connecting(self, transient):
         """
-        _on_connecting(transient) -> None
+        on_connecting(transient) -> None
 
         Callback invoked before a connection is established. transient tells
         whether this is part of a reconnect (True) or an "initial" connect
@@ -433,9 +449,9 @@ class WebSocketSession(object):
         """
         pass
 
-    def _on_connected(self, transient):
+    def on_connected(self, transient):
         """
-        _on_connect(transient) -> None
+        on_connect(transient) -> None
 
         Callback invoked when a connection is established. transient tells
         whether this is part of a reconnect (True) or an "initial" connect
@@ -443,18 +459,18 @@ class WebSocketSession(object):
         """
         pass
 
-    def _on_message(self, msg):
+    def on_message(self, msg):
         """
-        _on_message(msg) -> None
+        on_message(msg) -> None
 
         Callback invoked when a WebSocket message arrives. msg is a
         wsfile.Message containing the data that were received.
         """
         pass
 
-    def _on_disconnecting(self, transient, ok):
+    def on_disconnecting(self, transient, ok):
         """
-        _on_disconnecting(transient, ok) -> None
+        on_disconnecting(transient, ok) -> None
 
         Callback invoked when a connection is about to be closed. transient
         tells whether this is part of a reconnect (True) or a "final" close
@@ -463,9 +479,9 @@ class WebSocketSession(object):
         """
         pass
 
-    def _on_disconnected(self, transient, ok):
+    def on_disconnected(self, transient, ok):
         """
-        _on_disconnect(transient, ok) -> None
+        on_disconnect(transient, ok) -> None
 
         Callback invoked when a connection has been closed. transient tells
         whether this is part of a reconnect (True) or a "final" close (False);
@@ -474,9 +490,9 @@ class WebSocketSession(object):
         """
         pass
 
-    def _on_error(self, exc, source, swallow=False):
+    def on_error(self, exc, source, swallow=False):
         """
-        _on_error(exc, source, swallow=False) -> None
+        on_error(exc, source, swallow=False) -> None
 
         Callback invoked when an error occurs somewhere. exc is the exception
         object (sys.exc_info() can be used to retrieve more information about
@@ -490,6 +506,24 @@ class WebSocketSession(object):
         the source.
         """
         if not swallow: raise
+
+    def send_message(self, data):
+        """
+        send_message(data) -> Future
+
+        Send a WebSocket frame containing the given data. The type of frame is
+        chosen automatically depending on whether data is a byte or Unicode
+        string. The send is asynchronous; this returns a Future that resolves
+        when it finishes.
+
+        In order to send messages, the session must be in the CONNECTED state;
+        if it is not, an exception is raised.
+        """
+        ret = self._run_wthread(lambda: self._do_send(self.conn, data),
+                                SST_CONNECTED)
+        if ret is None:
+            raise ValueError('Cannot send to non-connected WebSocketSession')
+        return ret
 
     def connect_async(self, url=None):
         """
