@@ -21,7 +21,7 @@ from .tools import spawn_daemon_thread, Future, EOFQueue
 __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'SST_INTERRUPTED', 'SST_DISCONNECTING', 'ERRS_RTHREAD',
            'ERRS_CONNECT', 'ERRS_READ', 'ERRS_WRITE', 'backoff_constant',
-           'backoff_linear', 'backoff_exponential', 'WebSocketSession']
+           'backoff_linear', 'backoff_exponential', 'ReconnectingWebSocket']
 
 SST_IDLE          = 'IDLE'
 SST_DISCONNECTED  = 'DISCONNECTED'
@@ -41,7 +41,7 @@ def backoff_constant(n):
 
     Linear backoff implementation. This returns the constant 1.
 
-    See WebSocketSession for details.
+    See ReconnectingWebSocket for details.
     """
     return 1
 
@@ -51,7 +51,7 @@ def backoff_linear(n):
 
     Quadratic backoff implementation. This returns n.
 
-    See WebSocketSession for details.
+    See ReconnectingWebSocket for details.
     """
     return n
 
@@ -61,38 +61,37 @@ def backoff_exponential(n):
 
     Exponential backoff implementation. This returns 2 ** n.
 
-    See WebSocketSession for details.
+    See ReconnectingWebSocket for details.
     """
     return 2 ** n
 
-class WebSocketSession(object):
+class ReconnectingWebSocket(object):
     """
-    WebSocketSession(url, backoff=None) -> new instance
+    ReconnectingWebSocket(url) -> new instance
 
-    A "session" spanning multiple WebSocket connections. url is the WebSocket
-    URL to connect to; backoff is the backoff algorithm to use (see below),
-    defaulting to the module-level backoff_linear() function.
+    An automatically reconnecting WebSocket wrapper. url is the WebSocket
+    URL to connect to.
 
     Instance attributes are:
     url    : The URL to connect to. Initialized from the same-named
              constructor parameter. May be modified after instance creation to
              cause future connections to use that URL (but see reconnect() for
              a safer way of achieving that).
-    backoff: The connection backoff algorithm to use. Initialized from the
-             same-named constructor parameter. This is a function mapping an
-             integer to a floating value; the parameter is the (zero-based)
-             index of the current connection attempt (that has failed), while
-             the return value is the time (in seconds) to wait until the next
-             connection attempt. The index is reset when a connection attempt
-             succeeds. The backoff_*() module-level functions provide a few
-             ready-to-use implementations to plug into this.
+    backoff: The connection backoff algorithm to use. Defaults to
+             backoff_linear(). This is a function mapping an integer to a
+             floating value; the parameter is the (zero-based) index of the
+             current connection attempt (that has failed), while the return
+             value is the time (in seconds) to wait until the next connection
+             attempt. The index is reset when a connection attempt succeeds.
+             The backoff_*() module-level functions provide a few ready-to-use
+             implementations to plug into this.
 
     Read-only instance attributes are:
     state     : The current connection state as one of the SST_* constants.
                 Reading this attribute is not particularly useful as it might
                 be changed by another thread immediately afterwards.
-    state_goal: The state this session is trying to achieve, either
-                SST_DISCONNECTED or SST_CONNECTED.
+    state_goal: The state this ReconnectingWebSocket is trying to achieve,
+                either SST_DISCONNECTED or SST_CONNECTED.
     conn      : The current WebSocket connection (if any) as a WebSocketFile.
 
     Class attributes (overridable on instances) are:
@@ -100,6 +99,8 @@ class WebSocketSession(object):
                  the underlying connection. If a thread is present, it is used
                  regardless of this setting; if it is not, writing operations
                  are performed by the threads that request them.
+
+    Note that this is not a drop-in replacement for the WebSocketFile class.
 
     Error handling note: The on_*() callback methods are not shielded against
     errors in overridden implementations; exceptions raised in them may bring
@@ -516,20 +517,21 @@ class WebSocketSession(object):
         string. The send is asynchronous; this returns a Future that resolves
         when it finishes.
 
-        In order to send messages, the session must be in the CONNECTED state;
-        if it is not, an exception is raised.
+        In order to send messages, the instance must be in the CONNECTED
+        state; if it is not, an exception is raised.
         """
         ret = self._run_wthread(lambda: self._do_send(self.conn, data),
                                 SST_CONNECTED)
         if ret is None:
-            raise ValueError('Cannot send to non-connected WebSocketSession')
+            raise ValueError('Cannot send to non-connected '
+                'ReconnectingWebSocket')
         return ret
 
     def connect_async(self, url=None):
         """
         disconnect_async(url=None) -> Future
 
-        Bring this session into the "connected" state, creating a WebSocket
+        Bring this instance into the "connected" state, creating a WebSocket
         connection as necessary.
 
         This is the asynchronous version of connect(); see there for more
@@ -543,7 +545,7 @@ class WebSocketSession(object):
         """
         reconnect_async(url=None, ok=True) -> Future
 
-        Bring this session into the "connected" state, forcing a
+        Bring this instance into the "connected" state, forcing a
         disconnect-connect cycle if it is already connected.
 
         This is the asynchronous version of reconnect(); see there for more
@@ -558,7 +560,7 @@ class WebSocketSession(object):
         """
         disconnect(ok=True) -> Future
 
-        Bring this session into the "disconnected" state, closing the internal
+        Bring this instance into the "disconnected" state, closing the internal
         WebSocket connection if necessary.
 
         This is the asynchronous version of disconnect(); see there for more
@@ -572,7 +574,7 @@ class WebSocketSession(object):
         """
         connect(url=None) -> None
 
-        Bring this session into the "connected" state, creating a WebSocket
+        Bring this instance into the "connected" state, creating a WebSocket
         connection (which will be renewed if it breaks before the next
         disconnect() call) as necessary.
 
@@ -595,7 +597,7 @@ class WebSocketSession(object):
         """
         reconnect(url=None, ok=True) -> None
 
-        Bring this session into the "connected" state, forcing a
+        Bring this instance into the "connected" state, forcing a
         disconnect-connect cycle if it is already connected.
 
         See the notes for disconnect() and connect() for more details. This is
@@ -607,7 +609,7 @@ class WebSocketSession(object):
         """
         disconnect(ok=True) -> None
 
-        Bring this session into the "disconnected" state, closing the internal
+        Bring this instance into the "disconnected" state, closing the internal
         WebSocket connection if necessary.
 
         ok tells whether the close is normal (True) or caused by some sort of
