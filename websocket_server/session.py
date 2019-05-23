@@ -262,8 +262,6 @@ class ReconnectingWebSocket(object):
                         detach(False)
                         break
                     self.state = SST_CONNECTING
-                    if self._connected is None:
-                        self._connected = Future()
                     params = self._conn_params()
                 # Connect.
                 self.on_connecting(transient)
@@ -286,8 +284,9 @@ class ReconnectingWebSocket(object):
                         do_read = False
                     self.state = SST_CONNECTED
                     self.conn = conn
-                    self._connected.set()
-                    self._connected = None
+                    if self._connected is not None:
+                        self._connected.set()
+                        self._connected = None
                 self.on_connected(transient)
                 # Read messages (unless we should disconnect immediately).
                 if do_read:
@@ -299,8 +298,6 @@ class ReconnectingWebSocket(object):
                     ok = self._disconnect_ok
                     self.state = SST_DISCONNECTING
                     self.conn = None
-                    if self._disconnected is None:
-                        self._disconnected = Future()
                 # Disconnect.
                 if run_dc_hook:
                     self.on_disconnecting(transient, ok)
@@ -309,8 +306,9 @@ class ReconnectingWebSocket(object):
                 # Done disconnecting.
                 with self:
                     self.state = SST_DISCONNECTED
-                    self._disconnected.set()
-                    self._disconnected = None
+                    if self._disconnected is not None:
+                        self._disconnected.set()
+                        self._disconnected = None
                 self.on_disconnected(transient, ok)
         except Exception as exc:
             self.on_error(exc, ERRS_RTHREAD)
