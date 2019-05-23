@@ -527,52 +527,9 @@ class ReconnectingWebSocket(object):
                 'ReconnectingWebSocket')
         return ret
 
-    def connect_async(self, url=None):
+    def connect(self, url=None):
         """
-        disconnect_async(url=None) -> Future
-
-        Bring this instance into the "connected" state, creating a WebSocket
-        connection as necessary.
-
-        This is the asynchronous version of connect(); see there for more
-        details. This method returns while the actual connection attempt
-        proceeds in the background; in order to wait for the connection to
-        complete, wait() on the returned Future.
-        """
-        return self._cycle_connstates(connect=True, url=url)
-
-    def reconnect_async(self, url=None, ok=True):
-        """
-        reconnect_async(url=None, ok=True) -> Future
-
-        Bring this instance into the "connected" state, forcing a
-        disconnect-connect cycle if it is already connected.
-
-        This is the asynchronous version of reconnect(); see there for more
-        details. This method returns while the actual operation proceeds in
-        the background; in order to wait for it to complete, wait() on the
-        returned Future.
-        """
-        return self._cycle_connstates(disconnect=True, connect=True, url=url,
-                                      disconnect_ok=ok)
-
-    def disconnect_async(self, ok=True):
-        """
-        disconnect(ok=True) -> Future
-
-        Bring this instance into the "disconnected" state, closing the internal
-        WebSocket connection if necessary.
-
-        This is the asynchronous version of disconnect(); see there for more
-        details. This method returns while the actual disconnect proceeds in
-        the background; in order to wait for the disconnect to complete,
-        wait() on the returned Future.
-        """
-        return self._cycle_connstates(disconnect=True, disconnect_ok=ok)
-
-    def connect(self, *args, **kwds):
-        """
-        connect(url=None) -> None
+        connect(url=None) -> Future
 
         Bring this instance into the "connected" state, creating a WebSocket
         connection (which will be renewed if it breaks before the next
@@ -587,35 +544,34 @@ class ReconnectingWebSocket(object):
         asynchronous actions and return quickly. If multiple calls are
         submitted in rapid succession, the effects of individual calls may be
         superseded by others or elided. Eventually, the last call (i.e. the
-        last to acquire the internal synchronization lock) will prevail.
-
-        This is the blocking version of connect_async().
+        last to acquire the internal synchronization lock) will prevail. In
+        order to wait for the connection to finish, call the returned Future's
+        wait() method.
         """
-        return self.connect_async(*args, **kwds).wait()
+        return self._cycle_connstates(connect=True, url=url)
 
-    def reconnect(self, *args, **kwds):
+    def reconnect(self, url=None, ok=True):
         """
-        reconnect(url=None, ok=True) -> None
+        reconnect(url=None, ok=True) -> Future
 
         Bring this instance into the "connected" state, forcing a
         disconnect-connect cycle if it is already connected.
 
-        See the notes for disconnect() and connect() for more details. This is
-        the blocking version of reconnect_async().
+        See the notes for connect() and disconnect() for more details.
         """
-        return self.reconnect_async(*args, **kwds).wait()
+        return self._cycle_connstates(disconnect=True, connect=True, url=url,
+                                      disconnect_ok=ok)
 
-    def disconnect(self, *args, **kwds):
+    def disconnect(self, ok=True):
         """
-        disconnect(ok=True) -> None
+        disconnect(ok=True) -> Future
 
-        Bring this instance into the "disconnected" state, closing the internal
-        WebSocket connection if necessary.
+        Bring this instance into the "disconnected" state, closing the
+        internal WebSocket connection if necessary.
 
         ok tells whether the close is normal (True) or caused by some sort of
         error (False).
 
-        See the notes for connect() (but in reverse) for more details. This is
-        the blocking version of disconnect_async().
+        See the notes for connect() (but in reverse) for more details.
         """
-        return self.disconnect_async(*args, **kwds).wait()
+        return self._cycle_connstates(disconnect=True, disconnect_ok=ok)
