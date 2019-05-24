@@ -67,16 +67,20 @@ def backoff_exponential(n):
 
 class ReconnectingWebSocket(object):
     """
-    ReconnectingWebSocket(url) -> new instance
+    ReconnectingWebSocket(url, protos=None) -> new instance
 
     An automatically reconnecting WebSocket wrapper. url is the WebSocket
-    URL to connect to.
+    URL to connect to. protos is an indication on which WebSocket subprotocols
+    may be used.
 
     Instance attributes are:
     url    : The URL to connect to. Initialized from the same-named
              constructor parameter. May be modified after instance creation to
              cause future connections to use that URL (but see reconnect() for
              a safer way of achieving that).
+    protos : Which WebSocket subprotocols may be used. May be None, a single
+             string, or a list of strings. See client.connect() for more
+             details.
     backoff: The connection backoff algorithm to use. Defaults to
              backoff_linear(). This is a function mapping an integer to a
              floating value; the parameter is the (zero-based) index of the
@@ -109,15 +113,15 @@ class ReconnectingWebSocket(object):
 
     USE_WTHREAD = True
 
-    def __init__(self, url, backoff=None):
+    def __init__(self, url, protos=None):
         """
-        __init__(url, backoff=None) -> None
+        __init__(url, protos=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
-        if backoff is None: backoff = backoff_linear
         self.url = url
-        self.backoff = backoff
+        self.protos = protos
+        self.backoff = backoff_linear
         self.state = SST_IDLE
         self.state_goal = SST_DISCONNECTED
         self.conn = None
@@ -355,15 +359,16 @@ class ReconnectingWebSocket(object):
         Concurrency note: This method is called with the internal monitor lock
         held and should therefore finish quickly.
         """
-        return {'url': self.url}
+        return {'url': self.url, 'protos': self.protos}
 
-    def _do_connect(self, url):
+    def _do_connect(self, url, protos):
         """
-        _do_connect(url) -> WebSocketFile
+        _do_connect(url, protos) -> WebSocketFile
 
         Actually establish a WebSocket connection and return it. url is the
         WebSocket URL to connect to; overriding methods may specify additional
-        parameters.
+        parameters. protos is an indication on which subprotocols to use (see
+        the same-named instance attribute for details).
 
         Concurrency note: This method is called with no locks held; attribute
         accesses should be protected via "with self:" as necessary. However,
@@ -371,7 +376,7 @@ class ReconnectingWebSocket(object):
         URL) should be retrieved in _conn_params() instead; see there for
         more details.
         """
-        return client.connect(url)
+        return client.connect(url, protos)
 
     def _do_read_loop(self, conn):
         """

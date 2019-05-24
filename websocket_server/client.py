@@ -70,7 +70,12 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
     password fields, those will be sent as a Basic HTTP authentication
     header.
     protos (a list of strings, a string, or None) can be used to specify
-    subprotocols.
+    subprotocols. The server chooses a subprotocol (or none) from the list
+    given by the client (where None counts as no subprotocols and the
+    single-string form of the argument is interpreted as a comma-separated
+    list). The subprotocol finally chosen (if any) is stored as the
+    "subprotocol" instance attribute of the return value. See
+    wsfile.client_handshake() for more details.
     headers can be None or a mapping of additional request headers to be
     added (NOTE that it is expected to implement the mutable mapping
     protocol and might be modified in-place).
