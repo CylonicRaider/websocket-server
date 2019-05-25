@@ -44,6 +44,17 @@ def run_cb(_func, *_args, **_kwds):
     """
     if _func is not None: return _func(*_args, **_kwds)
 
+def run_async(_func, _wait, *_args, **_kwds):
+    """
+    run_async(func, wait, *args, **kwds) -> Future
+
+    Convenience function that runs func(*args, **kwds) and optionally (i.e. if
+    wait is true) wait()s on the return value before re-returning it.
+    """
+    ret = _func(*_args, **_kwds)
+    if _wait: ret.wait()
+    return ret
+
 def backoff_constant(n):
     """
     backoff_constant(n) -> float
@@ -619,3 +630,70 @@ class ReconnectingWebSocket(object):
         See the notes for connect() (but in reverse) for more details.
         """
         return self._cycle_connstates(disconnect=True, disconnect_ok=ok)
+
+class WebSocketSession(object):
+    """
+    WebSocketSession(conn) -> new instance
+
+    A wrapper around a ReconnectingWebSocket providing high-level message
+    submission and reception facilities. conn is a ReconnectingWebSocket (or
+    an instance of a subclass) providing low-level message handling.
+    Theoretically, an entirely different class (using a different underlying
+    transport) could be substituted here.
+
+    Instance attributes are:
+    conn: The connection wrapped by this WebSocketSession, as passed to the
+          constructor.
+    """
+
+    @classmethod
+    def create(cls, url, protos=None, **kwds):
+        """
+        create(url, protos=None, conn_cls=None, **kwds) -> new instance
+
+        Create a new WebSocketSession along with a new enclosed
+        ReconnectingWebSocket. url and protos are forwarded to the
+        ReconnectingWebSocket constructor; other keyword arguments are
+        forwarded to the WebSocketSession constructor.
+        """
+        conn_cls = kwds.pop('conn_cls', None)
+        if conn_cls is None: conn_cls = ReconnectingWebSocket
+        return cls(conn_cls(url, protos), **kwds)
+
+    def __init__(self, conn):
+        """
+        __init__(conn) -> None
+
+        Instance initializer; see the class docstring for details.
+        """
+        self.conn = conn
+
+    def connect(self, wait=True, **kwds):
+        """
+        connect(wait=True, **kwds) -> Future
+
+        Establish an underlying connection. Returns a Future that resolves
+        whenever the connection is established. wait indicates whether this
+        call should block until that is the case. Additional keyword arguments
+        are forwarded to ReconnectingWebSocket.connect(); see there for
+        details.
+        """
+        return run_async(self.conn.connect, wait, **kwds)
+
+    def reconnect(self, wait=True, **kwds):
+        """
+        reconnect(wait=True, **kwds) -> Future
+
+        Re-establish the underlying connection. See connect() and
+        ReconnectingWebSocket.reconnect() for details.
+        """
+        return run_async(self.conn.reconnect, wait, **kwds)
+
+    def disconnect(self, wait=True, **kwds):
+        """
+        disconnect(wait=True, **kwds)
+
+        Close the underlying connection. See connect() and
+        ReconnectingWebSocket.disconnect() for details.
+        """
+        return run_async(self.conn.disconnect, wait, **kwds)
