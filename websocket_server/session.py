@@ -35,6 +35,15 @@ ERRS_CONNECT = 'connect'
 ERRS_READ    = 'read'
 ERRS_WRITE   = 'write'
 
+def run_cb(_func, *_args, **_kwds):
+    """
+    run_cb(func, *args, **kwds) -> any or None
+
+    If func is not None, return the result of calling it with the given
+    arguments; otherwise, do nothing and return None.
+    """
+    if _func is not None: return _func(*_args, **_kwds)
+
 def backoff_constant(n):
     """
     backoff_constant(n) -> float
@@ -90,6 +99,14 @@ class ReconnectingWebSocket(object):
              The backoff_*() module-level functions provide a few ready-to-use
              implementations to plug into this.
 
+    For various events (see the on_*() methods), callbacks can be specified
+    via the correpondingly-named *_cb instance attributes; the callbacks (if
+    not None) are called with the same arguments as the event handler methods
+    (including the ReconnectingWebSocket instance as the first positional
+    argument) by the event handlers' default implementations. Overriding
+    methods are strongly advised to call the parent class' implementation to
+    preserve this behavior (but see also on_error()).
+
     Read-only instance attributes are:
     state     : The current connection state as one of the SST_* constants.
                 Reading this attribute is not particularly useful as it might
@@ -106,9 +123,9 @@ class ReconnectingWebSocket(object):
 
     Note that this is not a drop-in replacement for the WebSocketFile class.
 
-    Error handling note: The on_*() callback methods are not shielded against
-    errors in overridden implementations; exceptions raised in them may bring
-    the connection into an inconsistent state.
+    Error handling note: The on_*() event handler methods are not shielded
+    against errors in overridden implementations; exceptions raised in them
+    may bring the connection into an inconsistent state.
     """
 
     USE_WTHREAD = True
@@ -122,6 +139,12 @@ class ReconnectingWebSocket(object):
         self.url = url
         self.protos = protos
         self.backoff = backoff_linear
+        self.connecting_cb = None
+        self.connected_cb = None
+        self.message_cb = None
+        self.disconnecting_cb = None
+        self.disconnected_cb = None
+        self.error_cb = None
         self.state = SST_IDLE
         self.state_goal = SST_DISCONNECTED
         self.conn = None
@@ -172,9 +195,9 @@ class ReconnectingWebSocket(object):
         None, is stored in the same-named instance attribute. disconnect_ok
         is only meaningful when disconnect is specified, and tells whether the
         disconnect is regular (True) or due to some error (False); it is
-        passed on to the corresponding life cycle callbacks. Returns a Future
-        that will resolve (to some unspecified value) when the requested
-        operations are done (which may be immediately).
+        passed on to the corresponding life cycle event handlers. Returns a
+        Future that will resolve (to some unspecified value) when the
+        requested operations are done (which may be immediately).
 
         The "state_goal" instance attribute is set to SST_CONNECTED if connect
         is true, otherwise to SST_DISCONNECTED if disconnect is true,
@@ -447,68 +470,86 @@ class ReconnectingWebSocket(object):
         """
         on_connecting(transient) -> None
 
-        Callback invoked before a connection is established. transient tells
-        whether this is part of a reconnect (True) or an "initial" connect
-        (False).
+        Event handler method invoked before a connection is established.
+        transient tells whether this is part of a reconnect (True) or an
+        "initial" connect (False).
+
+        The default implementation invokes the corresponding callback; see the
+        class docstring for details.
         """
-        pass
+        run_cb(self.connecting_cb, self, transient)
 
     def on_connected(self, transient):
         """
         on_connect(transient) -> None
 
-        Callback invoked when a connection is established. transient tells
-        whether this is part of a reconnect (True) or an "initial" connect
-        (False).
+        Event handler method invoked when a connection is established.
+        transient tells whether this is part of a reconnect (True) or an
+        "initial" connect (False).
+
+        The default implementation invokes the corresponding callback; see the
+        class docstring for details.
         """
-        pass
+        run_cb(self.connected_cb, self, transient)
 
     def on_message(self, msg):
         """
         on_message(msg) -> None
 
-        Callback invoked when a WebSocket message arrives. msg is a
-        wsfile.Message containing the data that were received.
+        Event handler method invoked when a WebSocket message arrives. msg is
+        a wsfile.Message containing the data that were received.
+
+        The default implementation invokes the corresponding callback; see the
+        class docstring for details.
         """
-        pass
+        run_cb(self.message_cb, self, msg)
 
     def on_disconnecting(self, transient, ok):
         """
         on_disconnecting(transient, ok) -> None
 
-        Callback invoked when a connection is about to be closed. transient
-        tells whether this is part of a reconnect (True) or a "final" close
-        (False); ok tells whether the disconnect was "regular" (True) rather
-        than caused by some sort of error (False).
+        Event handler method invoked when a connection is about to be closed.
+        transient tells whether this is part of a reconnect (True) or a
+        "final" close (False); ok tells whether the disconnect was "regular"
+        (True) rather than caused by some sort of error (False).
+
+        The default implementation invokes the corresponding callback; see the
+        class docstring for details.
         """
-        pass
+        run_cb(self.disconnecting_cb, self, transient, ok)
 
     def on_disconnected(self, transient, ok):
         """
         on_disconnect(transient, ok) -> None
 
-        Callback invoked when a connection has been closed. transient tells
-        whether this is part of a reconnect (True) or a "final" close (False);
-        ok tells whether the disconnect was "regular" (True) rather than
-        caused by some sort of error (False).
+        Event handler method invoked when a connection has been closed.
+        transient tells whether this is part of a reconnect (True) or a
+        "final" close (False); ok tells whether the disconnect was "regular"
+        (True) rather than caused by some sort of error (False).
+
+        The default implementation invokes the corresponding callback; see the
+        class docstring for details.
         """
-        pass
+        run_cb(self.disconnected_cb, self, transient, ok)
 
     def on_error(self, exc, source, swallow=False):
         """
         on_error(exc, source, swallow=False) -> None
 
-        Callback invoked when an error occurs somewhere. exc is the exception
-        object (sys.exc_info() can be used to retrieve more information about
-        the error); source is a ERRS_* constant indicating in which component
-        the error originated; swallow tells whether the exception should be
-        suppressed (rather than being re-raised).
+        Event handler method invoked when an error occurs somewhere. exc is
+        the exception object (sys.exc_info() can be used to retrieve more
+        information about the error); source is a ERRS_* constant indicating
+        in which component the error originated; swallow tells whether the
+        exception should be suppressed (rather than being re-raised).
 
-        The default implementation does nothing aside from re-raising the
-        exception (if told to); other implementations could make more
-        fine-grained decisions based on, e.g., the type of the exception and
-        the source.
+        The default implementation does nothing aside from invoking the
+        corresponding callback (see the class docstring for details) and
+        re-raising the exception if told to.
+        Other implementations could make more fine-grained decisions based on,
+        e.g., the type of the exception and the source. See also the
+        module-level run_cb() convenience function.
         """
+        run_cb(self.error_cb, self, exc, source, swallow)
         if not swallow: raise
 
     def send_message(self, data):
