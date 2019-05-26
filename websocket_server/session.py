@@ -641,10 +641,106 @@ class WebSocketSession(object):
     Theoretically, an entirely different class (using a different underlying
     transport) could be substituted here.
 
+    Messages sent into the WebSocket are called "commands" and are represented
+    by the nested Command class; messages received from the WebSocket are
+    called "events" (regardless of their relation to previous commands) and
+    are represented by the Event class.
+
     Instance attributes are:
     conn: The connection wrapped by this WebSocketSession, as passed to the
           constructor.
     """
+
+    class Command(object):
+        """
+        Command(data, id=None, responses=0) -> new instance
+
+        A message sent from a WebSocketSession. data is the payload of the
+        command; id is an identifier of the command (for recognizing
+        responses); responses is the amount of responses the command expects.
+
+        Instance attributes (all initialized from the corresponding
+        constructor parameters) are:
+        data     : The payload of the command as an arbitrary
+                   application-specific object. See also the serialize()
+                   method.
+        id       : A unique identifier of the command as some hashable object.
+                   The value None is special-cased to mean that this command
+                   cannot be identified (and, thus, cannot receive responses).
+        responses: The amount of responses this command has yet to receive.
+                   WebSocketSession retains commands until their responses
+                   attribute drops to zero (in particular, commands
+                   initialized with responses=0 are forgotten immediately
+                   after submission). None is special-cased to mean
+                   arbitrarily many (such a command is never discarded).
+
+        Note that command responses are represented as instances of the Event
+        class (as there is only one class for incoming frames and labelling
+        frames unrelated to any command as "responses" was deemed worse than
+        the current naming scheme).
+        """
+
+        def __init__(self, data, id=None, responses=0):
+            """
+            __init__(data, id=None, responses=0) -> None
+
+            Instance initializer; see the class docstring for details.
+            """
+            self.data = data
+            self.id = id
+            self.responses = responses
+
+        def serialize(self):
+            """
+            serialize() -> str or bytes
+
+            Convert this Command into an application-specific on-the-wire
+            format and return that as a Unicode or byte string object.
+
+            The default implementation returns the data attribute unchanged,
+            violating the method's contract unless data is already a string
+            of an appropriate type.
+            """
+            return self.data
+
+    class Event(object):
+        """
+        Event(data, id=None) -> new instance
+
+        A message received from the underlying connection of a
+        WebSocketSession. data is the payload of the event; id is an
+        identifier for matching events to related commands.
+
+        Instance attributes (all initialized from the corresponding
+        constructor parameters) are:
+        data: The payload of the event as an arbitrary application-specific
+              object. See also the deserialize() method.
+        id  : An identifier relating this event to some command. None is
+              special-cased to mean that this event cannot be identified.
+              See also the Command class for more details on reply matching.
+        """
+
+        @classmethod
+        def deserialize(cls, data):
+            """
+            deserialize(data) -> new instance
+
+            Convert the given data from an application-specific on-the-wire
+            format into an internal format.
+
+            The default implementation returns an instance with data unchanged
+            and an id of None.
+            """
+            return cls(data)
+
+        def __init__(self, data, id=None):
+            """
+            __init__(data, id=None) -> None
+
+            Instance initializer; see the class docstring for details.
+            """
+            self.data = data
+            self.id = id
 
     @classmethod
     def create(cls, url, protos=None, **kwds):
