@@ -16,12 +16,13 @@ import time
 import threading
 
 from . import client
-from .tools import spawn_daemon_thread, Future, EOFQueue
+from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 
 __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'SST_INTERRUPTED', 'SST_DISCONNECTING', 'ERRS_RTHREAD',
-           'ERRS_CONNECT', 'ERRS_READ', 'ERRS_WRITE', 'backoff_constant',
-           'backoff_linear', 'backoff_exponential', 'ReconnectingWebSocket']
+           'ERRS_CONNECT', 'ERRS_READ', 'ERRS_WRITE', 'ERRS_SCHEDULER',
+           'backoff_constant', 'backoff_linear', 'backoff_exponential',
+           'ReconnectingWebSocket', 'WebSocketSession']
 
 SST_IDLE          = 'IDLE'
 SST_DISCONNECTED  = 'DISCONNECTED'
@@ -30,10 +31,11 @@ SST_CONNECTED     = 'CONNECTED'
 SST_INTERRUPTED   = 'INTERRUPTED'
 SST_DISCONNECTING = 'DISCONNECTING'
 
-ERRS_RTHREAD = 'rthread'
-ERRS_CONNECT = 'connect'
-ERRS_READ    = 'read'
-ERRS_WRITE   = 'write'
+ERRS_RTHREAD   = 'rthread'
+ERRS_CONNECT   = 'connect'
+ERRS_READ      = 'read'
+ERRS_WRITE     = 'write'
+ERRS_SCHEDULER = 'scheduler'
 
 def run_cb(_func, *_args, **_kwds):
     """
@@ -113,10 +115,10 @@ class ReconnectingWebSocket(object):
     For various events (see the on_*() methods), callbacks can be specified
     via the correpondingly-named *_cb instance attributes; the callbacks (if
     not None) are called with the same arguments as the event handler methods
-    (including the ReconnectingWebSocket instance as the first positional
-    argument) by the event handlers' default implementations. Overriding
-    methods are strongly advised to call the parent class' implementation to
-    preserve this behavior (but see also on_error()).
+    (excluding the "self" argument) by the event handlers' default
+    implementations. Overriding methods are strongly advised to call the
+    parent class' implementation to preserve this behavior (but see also
+    on_error()).
 
     Read-only instance attributes are:
     state     : The current connection state as one of the SST_* constants.
@@ -488,7 +490,7 @@ class ReconnectingWebSocket(object):
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.connecting_cb, self, transient)
+        run_cb(self.connecting_cb, transient)
 
     def on_connected(self, transient):
         """
@@ -501,7 +503,7 @@ class ReconnectingWebSocket(object):
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.connected_cb, self, transient)
+        run_cb(self.connected_cb, transient)
 
     def on_message(self, msg):
         """
@@ -513,7 +515,7 @@ class ReconnectingWebSocket(object):
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.message_cb, self, msg)
+        run_cb(self.message_cb, msg)
 
     def on_disconnecting(self, transient, ok):
         """
@@ -527,7 +529,7 @@ class ReconnectingWebSocket(object):
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.disconnecting_cb, self, transient, ok)
+        run_cb(self.disconnecting_cb, transient, ok)
 
     def on_disconnected(self, transient, ok):
         """
@@ -541,7 +543,7 @@ class ReconnectingWebSocket(object):
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.disconnected_cb, self, transient, ok)
+        run_cb(self.disconnected_cb, transient, ok)
 
     def on_error(self, exc, source, swallow=False):
         """
@@ -560,7 +562,7 @@ class ReconnectingWebSocket(object):
         e.g., the type of the exception and the source. See also the
         module-level run_cb() convenience function.
         """
-        run_cb(self.error_cb, self, exc, source, swallow)
+        run_cb(self.error_cb, exc, source, swallow)
         if not swallow: raise
 
     def send_message(self, data):
@@ -633,22 +635,26 @@ class ReconnectingWebSocket(object):
 
 class WebSocketSession(object):
     """
-    WebSocketSession(conn) -> new instance
+    WebSocketSession(conn, scheduler=None) -> new instance
 
     A wrapper around a ReconnectingWebSocket providing high-level message
     submission and reception facilities. conn is a ReconnectingWebSocket (or
     an instance of a subclass) providing low-level message handling.
     Theoretically, an entirely different class (using a different underlying
-    transport) could be substituted here.
+    transport) could be substituted here. scheduler is a Scheduler instance
+    that event handlers are executed in.
 
     Messages sent into the WebSocket are called "commands" and are represented
     by the nested Command class; messages received from the WebSocket are
     called "events" (regardless of their relation to previous commands) and
     are represented by the Event class.
 
-    Instance attributes are:
-    conn: The connection wrapped by this WebSocketSession, as passed to the
-          constructor.
+    Read-only instance attributes are:
+    conn     : The connection wrapped by this WebSocketSession, as passed to
+               the constructor.
+    scheduler: The Scheduler responsible for running high-level callbacks.
+    commands : A mapping from ID-s to Command instances representing
+               still-live commands.
     """
 
     class Command(object):
@@ -703,6 +709,18 @@ class WebSocketSession(object):
             """
             return self.data
 
+        def on_response(self, evt):
+            """
+            on_response(evt) -> None
+
+            Event handler method invoked when an event with the same ID as
+            this command (i.e. a response to this command) arrives.
+
+            Executed on the scheduler thread. The default implementation does
+            nothing.
+            """
+            pass
+
     class Event(object):
         """
         Event(data, id=None) -> new instance
@@ -756,13 +774,106 @@ class WebSocketSession(object):
         if conn_cls is None: conn_cls = ReconnectingWebSocket
         return cls(conn_cls(url, protos), **kwds)
 
-    def __init__(self, conn):
+    def __init__(self, conn, scheduler=None):
         """
-        __init__(conn) -> None
+        __init__(conn, scheduler=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
+        if scheduler is None: scheduler = Scheduler()
         self.conn = conn
+        self.scheduler = scheduler
+        self.commands = {}
+        self._lock = threading.RLock()
+        self._install_callbacks()
+
+    def __enter__(self):
+        "Context manager entry; internal."
+        self._lock.__enter__()
+
+    def __exit__(self, *args):
+        "Context manager exit; internal."
+        self._lock.__exit__(*args)
+
+    def _install_callbacks(self):
+        """
+        _install_callbacks() -> None
+
+        Wire up callbacks for interesting events into this instance's
+        connection and scheduler.
+        """
+        self.conn.message_cb = lambda msg: self._run_scheduler(
+            self._on_raw_message(msg))
+        self.conn.error_cb = self.on_error
+        self.scheduler.on_error = lambda exc: self.on_error(
+            exc, ERRS_SCHEDULER, True)
+
+    def _run_scheduler(self, cb):
+        """
+        _run_scheduler(cb) -> None
+
+        Schedule cb to be executed by this instance's Scheduler.
+        """
+        self.scheduler.add_now(cb)
+
+    def _on_raw_message(self, msg):
+        """
+        _on_raw_message(msg) -> None
+
+        Event handler method invoked when a message is received.
+
+        Executed on the scheduler thread. This implementation constructs an
+        Event from msg, dispatches it to either a command with the same ID
+        (see Command.on_response()) or this instance's on_event() (if there is
+        no such command), and garbage-collects the dispatched-to command (if
+        any and as necessary).
+        """
+        evt = self.Event.deserialize(msg)
+        with self:
+            cmd = self.commands.get(evt.id)
+        if cmd is not None:
+            cmd.on_response(evt)
+        else:
+            self.on_event(evt)
+        with self:
+            if cmd is not None and cmd.responses is not None:
+                cmd.responses -= 1
+                if cmd.responses <= 0:
+                    self.commands.pop(evt.id, None)
+
+    def on_event(self, evt):
+        """
+        on_event(evt) -> None
+
+        Event handler method invoked when an Event that does not match any
+        known command is received.
+
+        Executed on the scheduler thread. The default implementation does
+        nothing.
+        """
+        pass
+
+    def on_error(self, exc, source, swallow=False):
+        """
+        on_error(exc, source, swallow=False) -> None
+
+        Event handler method invoked when an error occurs. See
+        ReconnectingWebSocket.on_error() for details.
+        """
+        if not swallow: raise
+
+    def submit(self, cmd):
+        """
+        submit(cmd) -> None
+
+        Send the given Command instance into the underlying connection and
+        register it as waiting for responses (as necessary).
+        """
+        with self:
+            if cmd.id is not None and (cmd.responses is None or
+                                       cmd.responses > 0):
+                self.commands[cmd.id] = cmd
+        self.conn.send_message(cmd.serialize())
 
     def connect(self, wait=True, **kwds):
         """
@@ -787,7 +898,7 @@ class WebSocketSession(object):
 
     def disconnect(self, wait=True, **kwds):
         """
-        disconnect(wait=True, **kwds)
+        disconnect(wait=True, **kwds) -> Future
 
         Close the underlying connection. See connect() and
         ReconnectingWebSocket.disconnect() for details.
