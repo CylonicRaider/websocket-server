@@ -13,6 +13,7 @@ This module is NYI.
 """
 
 import time
+import collections
 import threading
 
 from . import client
@@ -653,7 +654,7 @@ class WebSocketSession(object):
     conn     : The connection wrapped by this WebSocketSession, as passed to
                the constructor.
     scheduler: The Scheduler responsible for running high-level callbacks.
-    commands : A mapping from ID-s to Command instances representing
+    commands : An ordered mapping from ID-s to Command instances representing
                still-live commands.
     """
 
@@ -783,7 +784,7 @@ class WebSocketSession(object):
         if scheduler is None: scheduler = Scheduler()
         self.conn = conn
         self.scheduler = scheduler
-        self.commands = {}
+        self.commands = collections.OrderedDict()
         self._lock = threading.RLock()
         self._install_callbacks()
 
