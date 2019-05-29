@@ -678,12 +678,16 @@ class Future(object):
     is None). lock, if not None, specifies the lock to synchronize internal
     operations on (defaulting to a new lock of an appropriate type).
 
-    Additional read-only instance attributes are:
-    value: The object enclosed by this Future, or None is not computed yet.
-    state: The computation state of this Future (one of the ST_PENDING ->
-           ST_COMPUTING -> ST_DONE constants). Note that the value might
-           change immediately after being accessed. See also the pending()
-           method.
+    Read-only instance attributes are:
+    cb      : The callback producing this Future's value (if any).
+    value   : The object enclosed by this Future, or None is not computed yet.
+    state   : The computation state of this Future (one of the ST_PENDING ->
+              ST_COMPUTING -> ST_DONE constants). Note that the value might
+              change immediately after being accessed. See also the pending()
+              method.
+    done_cbs: A list of callbacks to be run whenever this Future resolves.
+              Each is given the value resolved to as the only positional
+              argument. See also add_done_cb().
     """
 
     ST_PENDING   = 'PENDING'
@@ -718,6 +722,7 @@ class Future(object):
         self.cb = cb
         self.value = None
         self.state = self.ST_PENDING
+        self.done_cbs = []
         self._cond = threading.Condition(lock)
 
     def run(self):
@@ -738,11 +743,9 @@ class Future(object):
                 return False
             self._state = self.ST_COMPUTING
         v = self.cb()
-        with self._cond:
-            self._state = self.ST_DONE
-            self.value = v
-            self._cond.notifyAll()
-            return True
+        if not self._set(v, self.ST_COMPUTING):
+            raise AssertionError('Future has gotten into an invalid state')
+        return True
 
     def pending(self):
         """
@@ -772,6 +775,25 @@ class Future(object):
         with self._cond:
             return self.value if self._state == self.ST_DONE else default
 
+    def _set(self, value, check_state):
+        """
+        _set(value, check_state) -> bool
+
+        Internal: Test whether the state matches check_state; if it does, set
+        the state to DONE, the instance's value to the given value, and run
+        on-done callbacks. Returns whether the assignment succeeded (i.e. the
+        state matched).
+        """
+        with self._cond:
+            if self.state != check_state: return False
+            self.value = value
+            self.state = self.ST_DONE
+            callbacks = tuple(self.done_cbs)
+            self.done_cbs = None
+            self._cond.notifyAll()
+        for cb in callbacks: cb(value)
+        return True
+
     def set(self, value=None):
         """
         set(value=None) -> bool
@@ -785,12 +807,7 @@ class Future(object):
         value to be computed; this allows using Future as a one-shot
         equivalent of the threading.Event class.
         """
-        with self._cond:
-            if self.state != self.ST_PENDING: return False
-            self.value = value
-            self.state = self.ST_DONE
-            self._cond.notifyAll()
-            return True
+        return self._set(value, self.ST_PENDING)
 
     def wait(self, timeout=None, run=False):
         """
@@ -828,6 +845,23 @@ class Future(object):
             while self._state != self.ST_DONE:
                 self._cond.wait()
             return self.value
+
+    def add_done_cb(self, cb):
+        """
+        add_done_cb(cb) -> bool
+
+        Schedule cb to be invoked whenever this Future resolves (or
+        immediately if it already did). cb is passed the value the Future
+        resolved to as the only argument; its return value is ignored. This
+        method returns whether the callback was invoked immediately.
+        """
+        with self._cond:
+            if self._state != self.ST_DONE:
+                self.done_cbs.append(cb)
+                return False
+            v = self.value
+        cb(v)
+        return True
 
 class EOFQueue(object):
     """
