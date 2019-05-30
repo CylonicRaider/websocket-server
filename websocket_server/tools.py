@@ -605,6 +605,22 @@ class Scheduler(object):
         """
         return self.add_abs(cb, self.time(), daemon)
 
+    def wrap(self, func):
+        """
+        wrap(func) -> callable
+
+        Wrap func in a callable that runs func inside this scheduler. When the
+        returned callable is invoked, it uses add_now() to schedule a task
+        which will run func with any arguments provided to the returned
+        callable. The callable's return value is a Task object that allows
+        cancelling the execution again (as long as the caller is aware that
+        it invoked a Scheduler wrapper).
+        """
+        # Give the function a fancy name.
+        def scheduler_wrapper(*_args, **_kwds):
+            self.add_now(lambda: func(*_args, **_kwds))
+        return scheduler_wrapper
+
     def on_error(self, exc):
         """
         on_error(exc) -> None

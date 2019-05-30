@@ -803,19 +803,10 @@ class WebSocketSession(object):
         Wire up callbacks for interesting events into this instance's
         connection and scheduler.
         """
-        self.conn.message_cb = lambda msg: self._run_scheduler(
-            self._on_raw_message(msg))
+        self.conn.message_cb = self.scheduler.wrap(self._on_raw_message)
         self.conn.error_cb = self.on_error
         self.scheduler.on_error = lambda exc: self.on_error(
             exc, ERRS_SCHEDULER, True)
-
-    def _run_scheduler(self, cb):
-        """
-        _run_scheduler(cb) -> None
-
-        Schedule cb to be executed by this instance's Scheduler.
-        """
-        self.scheduler.add_now(cb)
 
     def _on_raw_message(self, msg):
         """
