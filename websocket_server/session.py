@@ -20,8 +20,10 @@ from . import client
 from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 
 __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
-           'SST_INTERRUPTED', 'SST_DISCONNECTING', 'ERRS_RTHREAD',
-           'ERRS_CONNECT', 'ERRS_READ', 'ERRS_WRITE', 'ERRS_SCHEDULER',
+           'SST_INTERRUPTED', 'SST_DISCONNECTING',
+           'CST_NEW', 'CST_SENT', 'CST_CONFIRMED',
+           'ERRS_RTHREAD', 'ERRS_CONNECT', 'ERRS_READ', 'ERRS_WRITE',
+           'ERRS_SCHEDULER',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
            'ReconnectingWebSocket', 'WebSocketSession']
 
@@ -31,6 +33,11 @@ SST_CONNECTING    = 'CONNECTING'
 SST_CONNECTED     = 'CONNECTED'
 SST_INTERRUPTED   = 'INTERRUPTED'
 SST_DISCONNECTING = 'DISCONNECTING'
+
+CST_NEW       = 'NEW'
+CST_SENDING   = 'SENDING'
+CST_SENT      = 'SENT'
+CST_CONFIRMED = 'CONFIRMED'
 
 ERRS_RTHREAD   = 'rthread'
 ERRS_CONNECT   = 'connect'
@@ -667,7 +674,7 @@ class WebSocketSession(object):
         responses); responses is the amount of responses the command expects.
 
         Instance attributes (all initialized from the corresponding
-        constructor parameters) are:
+        constructor parameters, if those exist) are:
         data     : The payload of the command as an arbitrary
                    application-specific object. See also the serialize()
                    method.
@@ -680,6 +687,8 @@ class WebSocketSession(object):
                    initialized with responses=0 are forgotten immediately
                    after submission). None is special-cased to mean
                    arbitrarily many (such a command is never discarded).
+        state    : The processing state of this command, as a CST_* constant.
+                   Managed by the WebSocketSession owing this command.
 
         Note that command responses are represented as instances of the Event
         class (as there is only one class for incoming frames and labelling
@@ -696,6 +705,7 @@ class WebSocketSession(object):
             self.data = data
             self.id = id
             self.responses = responses
+            self.state = CST_NEW
 
         def serialize(self):
             """
@@ -709,6 +719,22 @@ class WebSocketSession(object):
             of an appropriate type.
             """
             return self.data
+
+        def on_sent(self):
+            """
+            on_sent() -> None
+
+            Event handler method invoked when the command has been
+            successfully sent.
+
+            Note that a server might respond to the command before it has been
+            fully received (or transmitted); in particular, on_response()
+            might be invoked before this method.
+
+            Executed on the scheduler thread. The default implementation does
+            nothing.
+            """
+            pass
 
         def on_response(self, evt):
             """
@@ -808,6 +834,21 @@ class WebSocketSession(object):
         self.scheduler.on_error = lambda exc: self.on_error(
             exc, ERRS_SCHEDULER, True)
 
+    def _on_command_sent(self, cmd):
+        """
+        _on_command_sent(cmd) -> None
+
+        Event handler method invoked when the given command has been
+        successfully sent.
+
+        The default implementation updates the command's state and invokes its
+        on_sent() method.
+        """
+        with self:
+            if cmd.state == CST_NEW:
+                cmd.state = CST_SENT
+        cmd.on_sent()
+
     def _on_raw_message(self, msg):
         """
         _on_raw_message(msg) -> None
@@ -823,6 +864,8 @@ class WebSocketSession(object):
         evt = self.Event.deserialize(msg)
         with self:
             cmd = self.commands.get(evt.id)
+            if cmd is not None and cmd.state in (CST_NEW, CST_SENT):
+                cmd.state = CST_CONFIRMED
         if cmd is not None:
             cmd.on_response(evt)
         else:
@@ -856,7 +899,7 @@ class WebSocketSession(object):
 
     def submit(self, cmd):
         """
-        submit(cmd) -> None
+        submit(cmd) -> Future
 
         Send the given Command instance into the underlying connection and
         register it as waiting for responses (as necessary).
@@ -865,7 +908,12 @@ class WebSocketSession(object):
             if cmd.id is not None and (cmd.responses is None or
                                        cmd.responses > 0):
                 self.commands[cmd.id] = cmd
-        self.conn.send_message(cmd.serialize())
+            if cmd.state == CST_NEW:
+                cmd.state = CST_SENDING
+        ret = self.conn.send_message(cmd.serialize())
+        ret.add_done_cb(lambda v: self.scheduler.add_now(
+            lambda: self._on_command_sent(cmd)))
+        return ret
 
     def connect(self, wait=True, **kwds):
         """
