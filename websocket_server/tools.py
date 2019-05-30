@@ -751,13 +751,13 @@ class Future(object):
         callback to run.
         """
         with self._cond:
-            if self._state == self.ST_DONE:
+            if self.state == self.ST_DONE:
                 return True
-            elif self._state == self.ST_COMPUTING:
+            elif self.state == self.ST_COMPUTING:
                 return Ellipsis
             elif self.cb is None:
                 return False
-            self._state = self.ST_COMPUTING
+            self.state = self.ST_COMPUTING
         v = self.cb()
         if not self._set(v, self.ST_COMPUTING):
             raise AssertionError('Future has gotten into an invalid state')
@@ -779,7 +779,7 @@ class Future(object):
              after it has been called.
         """
         with self._cond:
-            return self._PENDING_MAP[self._state]
+            return self._PENDING_MAP[self.state]
 
     def get(self, default=None):
         """
@@ -789,7 +789,7 @@ class Future(object):
         is not available yet.
         """
         with self._cond:
-            return self.value if self._state == self.ST_DONE else default
+            return self.value if self.state == self.ST_DONE else default
 
     def _set(self, value, check_state):
         """
@@ -839,15 +839,15 @@ class Future(object):
         cannot guarantee that the computation will honor the timeout.
         """
         with self._cond:
-            if self._state == self.ST_DONE:
+            if self.state == self.ST_DONE:
                 return self.value
             elif not run or self.cb is None:
                 if timeout is None:
-                    while self._state != self.ST_DONE:
+                    while self.state != self.ST_DONE:
                         self._cond.wait()
                     return self.value
                 deadline = time.time() + timeout
-                while self._state != self.ST_DONE:
+                while self.state != self.ST_DONE:
                     now = time.time()
                     if now >= deadline:
                         raise self.Timeout('Future value did not arrive in '
@@ -858,7 +858,7 @@ class Future(object):
             raise ValueError('Cannot honor timeout while computing value')
         self.run()
         with self._cond:
-            while self._state != self.ST_DONE:
+            while self.state != self.ST_DONE:
                 self._cond.wait()
             return self.value
 
@@ -872,7 +872,7 @@ class Future(object):
         method returns whether the callback was invoked immediately.
         """
         with self._cond:
-            if self._state != self.ST_DONE:
+            if self.state != self.ST_DONE:
                 self.done_cbs.append(cb)
                 return False
             v = self.value
