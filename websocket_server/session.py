@@ -21,7 +21,7 @@ from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 
 __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'SST_INTERRUPTED', 'SST_DISCONNECTING',
-           'CST_NEW', 'CST_SENT', 'CST_CONFIRMED',
+           'CST_NEW', 'CST_SENDING', 'CST_SENT', 'CST_CONFIRMED',
            'ERRS_RTHREAD', 'ERRS_CONNECT', 'ERRS_READ', 'ERRS_WRITE',
            'ERRS_SCHEDULER',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
@@ -144,9 +144,10 @@ class ReconnectingWebSocket(object):
 
     Note that this is not a drop-in replacement for the WebSocketFile class.
 
-    Error handling note: The on_*() event handler methods are not shielded
-    against errors in overridden implementations; exceptions raised in them
-    may bring the connection into an inconsistent state.
+    Error handling note: The on_*() event handler methods and various
+    callbacks are not shielded against errors in overridden implementations;
+    exceptions raised in them may bring the connection into an inconsistent
+    state.
     """
 
     USE_WTHREAD = True
@@ -437,17 +438,22 @@ class ReconnectingWebSocket(object):
             if frame is None: break
             self.on_message(frame)
 
-    def _do_send(self, conn, data):
+    def _do_send(self, conn, data, before_cb, after_cb):
         """
         _do_send(conn, data) -> None
 
         Backend of the send_message() method. This (synchronously) submits
-        data into the WebSocketFile conn using an appropriate frame type.
+        data into the WebSocketFile conn using an appropriate frame type and
+        invokes the given callbacks.
         """
+        if before_cb is not None:
+            before_cb()
         if isinstance(data, bytes):
             conn.write_binary_frame(data)
         else:
             conn.write_text_frame(data)
+        if after_cb is not None:
+            after_cb()
 
     def _do_disconnect(self, conn, asynchronous=False):
         """
@@ -573,20 +579,25 @@ class ReconnectingWebSocket(object):
         run_cb(self.error_cb, exc, source, swallow)
         if not swallow: raise
 
-    def send_message(self, data):
+    def send_message(self, data, before_cb=None, after_cb=None):
         """
-        send_message(data) -> Future
+        send_message(data, before_cb=None, after_cb=None) -> Future
 
         Send a WebSocket frame containing the given data. The type of frame is
         chosen automatically depending on whether data is a byte or Unicode
         string. The send is asynchronous; this returns a Future that resolves
-        when it finishes.
+        when it finishes. before_cb is invoked (if not None and with no
+        arguments) immediately before sending the message, after_cb (with the
+        same notes as before_cb) is invoked immediately after sending it.
 
         In order to send messages, the instance must be in the CONNECTED
-        state; if it is not, an exception is raised.
+        state; if it is not, an exception is raised. All sends and callbacks
+        (on the same ReconnectingWebSocket) are serialized w.r.t. each other
+        (in particular, a message's after_cb is invoked before the next one's
+        before_cb).
         """
-        ret = self._run_wthread(lambda: self._do_send(self.conn, data),
-                                SST_CONNECTED)
+        ret = self._run_wthread(lambda: self._do_send(self.conn, data,
+            before_cb, after_cb), SST_CONNECTED)
         if ret is None:
             raise ValueError('Cannot send to non-connected '
                 'ReconnectingWebSocket')
@@ -720,6 +731,21 @@ class WebSocketSession(object):
             """
             return self.data
 
+        def on_sending(self):
+            """
+            on_sending() -> None
+
+            Event handler method invoked when the command has started being
+            sent.
+
+            Executed on the scheduler thread; in particular, some bits of the
+            command may have already left the process; however, this is
+            guaranteed to be scheduled before any related on_response()
+            (unless the server guesses the command's ID). The default
+            implementation does nothing.
+            """
+            pass
+
         def on_sent(self):
             """
             on_sent() -> None
@@ -729,7 +755,7 @@ class WebSocketSession(object):
 
             Note that a server might respond to the command before it has been
             fully received (or transmitted); in particular, on_response()
-            might be invoked before this method.
+            might be invoked before this method (see also on_sending()).
 
             Executed on the scheduler thread. The default implementation does
             nothing.
@@ -834,20 +860,35 @@ class WebSocketSession(object):
         self.scheduler.on_error = lambda exc: self.on_error(
             exc, ERRS_SCHEDULER, True)
 
+    def _on_command_sending(self, cmd):
+        """
+        _on_command_sending(cmd) -> None
+
+        Event handler method invoked when the given command is about to be
+        sent. Executed synchronously just before the actual send.
+
+        The default implementation updates the command's state and schedules
+        its on_sending() method to be run.
+        """
+        with self:
+            if cmd.state == CST_NEW:
+                cmd.state = CST_SENDING
+            self.scheduler.add_now(cmd.on_sending)
+
     def _on_command_sent(self, cmd):
         """
         _on_command_sent(cmd) -> None
 
         Event handler method invoked when the given command has been
-        successfully sent.
+        successfully sent. Executed synchronously just after the send.
 
-        The default implementation updates the command's state and invokes its
-        on_sent() method.
+        The default implementation updates the command's state and schedules
+        its on_sent() method to be run.
         """
         with self:
-            if cmd.state == CST_NEW:
+            if cmd.state in (CST_NEW, CST_SENDING):
                 cmd.state = CST_SENT
-        cmd.on_sent()
+            self.scheduler.add_now(cmd.on_sent)
 
     def _on_raw_message(self, msg):
         """
@@ -864,7 +905,8 @@ class WebSocketSession(object):
         evt = self.Event.deserialize(msg)
         with self:
             cmd = self.commands.get(evt.id)
-            if cmd is not None and cmd.state in (CST_NEW, CST_SENT):
+            if cmd is not None and cmd.state in (CST_NEW, CST_SENDING,
+                                                 CST_SENT):
                 cmd.state = CST_CONFIRMED
         if cmd is not None:
             cmd.on_response(evt)
@@ -910,10 +952,9 @@ class WebSocketSession(object):
                 self.commands[cmd.id] = cmd
             if cmd.state == CST_NEW:
                 cmd.state = CST_SENDING
-        ret = self.conn.send_message(cmd.serialize())
-        ret.add_done_cb(lambda v: self.scheduler.add_now(
-            lambda: self._on_command_sent(cmd)))
-        return ret
+        return self.conn.send_message(cmd.serialize(),
+                                      lambda: self._on_command_sending(cmd),
+                                      lambda: self._on_command_sent(cmd))
 
     def connect(self, wait=True, **kwds):
         """
