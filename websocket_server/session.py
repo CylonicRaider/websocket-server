@@ -14,6 +14,7 @@ This module is NYI.
 
 import time
 import collections
+import uuid
 import threading
 
 from . import client
@@ -226,7 +227,7 @@ class ReconnectingWebSocket(object):
         otherwise it is unmodified.
         """
         def disconnect_cb():
-            self.on_disconnecting(connect, disconnect_ok)
+            self.on_disconnecting(disconnect_conn.id, connect, disconnect_ok)
             self._do_disconnect(disconnect_conn, True)
         disconnect_conn = None
         with self:
@@ -336,7 +337,7 @@ class ReconnectingWebSocket(object):
                     if self._connected is not None:
                         self._connected.set()
                         self._connected = None
-                self.on_connected(transient)
+                self.on_connected(conn.id, transient)
                 # Read messages (unless we should disconnect immediately).
                 if do_read:
                     self._do_read_loop(conn)
@@ -349,7 +350,7 @@ class ReconnectingWebSocket(object):
                     self.conn = None
                 # Disconnect.
                 if run_dc_hook:
-                    self.on_disconnecting(transient, ok)
+                    self.on_disconnecting(conn.id, transient, ok)
                 self._do_disconnect(conn)
                 conn = None
                 # Done disconnecting.
@@ -358,7 +359,7 @@ class ReconnectingWebSocket(object):
                     if self._disconnected is not None:
                         self._disconnected.set()
                         self._disconnected = None
-                self.on_disconnected(transient, ok)
+                self.on_disconnected(conn.id, transient, ok)
         except Exception as exc:
             self.on_error(exc, ERRS_RTHREAD)
         finally:
@@ -411,9 +412,14 @@ class ReconnectingWebSocket(object):
         _do_connect(url, protos) -> WebSocketFile
 
         Actually establish a WebSocket connection and return it. url is the
-        WebSocket URL to connect to; overriding methods may specify additional
-        parameters. protos is an indication on which subprotocols to use (see
-        the same-named instance attribute for details).
+        WebSocket URL to connect to. protos is an indication on which
+        subprotocols to use (see the same-named instance attribute for
+        details). Overriding methods may specify additional parameters.
+
+        The return value is expected to be a valid WebSocketFile with an "id"
+        attribute containing a comparable and hashable object that uniquely
+        identifies the connection. This implementation uses a random (version
+        4) UUID.
 
         Concurrency note: This method is called with no locks held; attribute
         accesses should be protected via "with self:" as necessary. However,
@@ -421,7 +427,9 @@ class ReconnectingWebSocket(object):
         URL) should be retrieved in _conn_params() instead; see there for
         more details.
         """
-        return client.connect(url, protos)
+        conn = client.connect(url, protos)
+        conn.id = uuid.uuid4()
+        return conn
 
     def _do_read_loop(self, conn):
         """
@@ -499,25 +507,26 @@ class ReconnectingWebSocket(object):
 
         Event handler method invoked before a connection is established.
         transient tells whether this is part of a reconnect (True) or an
-        "initial" connect (False).
+        "initial" connect (False). Since the connection is not established
+        yet, no ID is provided.
 
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
         run_cb(self.connecting_cb, transient)
 
-    def on_connected(self, transient):
+    def on_connected(self, connid, transient):
         """
-        on_connect(transient) -> None
+        on_connect(connid, transient) -> None
 
         Event handler method invoked when a connection is established.
-        transient tells whether this is part of a reconnect (True) or an
-        "initial" connect (False).
+        connid is the ID of the connection. transient tells whether this is
+        part of a reconnect (True) or an "initial" connect (False).
 
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.connected_cb, transient)
+        run_cb(self.connected_cb, connid, transient)
 
     def on_message(self, msg):
         """
@@ -531,33 +540,35 @@ class ReconnectingWebSocket(object):
         """
         run_cb(self.message_cb, msg)
 
-    def on_disconnecting(self, transient, ok):
+    def on_disconnecting(self, connid, transient, ok):
         """
-        on_disconnecting(transient, ok) -> None
+        on_disconnecting(connid, transient, ok) -> None
 
         Event handler method invoked when a connection is about to be closed.
-        transient tells whether this is part of a reconnect (True) or a
-        "final" close (False); ok tells whether the disconnect was "regular"
-        (True) rather than caused by some sort of error (False).
+        connid is the ID of the connection. transient tells whether this is
+        part of a reconnect (True) or a "final" close (False). ok tells
+        whether the disconnect was "regular" (True) rather than caused by some
+        sort of error (False).
 
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.disconnecting_cb, transient, ok)
+        run_cb(self.disconnecting_cb, connid, transient, ok)
 
-    def on_disconnected(self, transient, ok):
+    def on_disconnected(self, connid, transient, ok):
         """
-        on_disconnect(transient, ok) -> None
+        on_disconnect(connid, transient, ok) -> None
 
         Event handler method invoked when a connection has been closed.
-        transient tells whether this is part of a reconnect (True) or a
-        "final" close (False); ok tells whether the disconnect was "regular"
-        (True) rather than caused by some sort of error (False).
+        connid is the ID of the connection. transient tells whether this is
+        part of a reconnect (True) or a "final" close (False). ok tells
+        whether the disconnect was "regular" (True) rather than caused by some
+        sort of error (False).
 
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.disconnected_cb, transient, ok)
+        run_cb(self.disconnected_cb, connid, transient, ok)
 
     def on_error(self, exc, source, swallow=False):
         """
