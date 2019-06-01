@@ -444,7 +444,7 @@ class ReconnectingWebSocket(object):
             except Exception as exc:
                 self.on_error(exc, ERRS_READ)
             if frame is None: break
-            self.on_message(frame)
+            self.on_message(frame, conn.id)
 
     def _do_send(self, conn, data, before_cb, after_cb):
         """
@@ -528,17 +528,18 @@ class ReconnectingWebSocket(object):
         """
         run_cb(self.connected_cb, connid, transient)
 
-    def on_message(self, msg):
+    def on_message(self, msg, connid):
         """
-        on_message(msg) -> None
+        on_message(msg, connid) -> None
 
         Event handler method invoked when a WebSocket message arrives. msg is
-        a wsfile.Message containing the data that were received.
+        a wsfile.Message containing the data that were received. connid is the
+        ID of the connection the message was received from.
 
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.message_cb, msg)
+        run_cb(self.message_cb, msg, connid)
 
     def on_disconnecting(self, connid, transient, ok):
         """
@@ -787,7 +788,7 @@ class WebSocketSession(object):
 
     class Event(object):
         """
-        Event(data, id=None) -> new instance
+        Event(data, connid, id=None) -> new instance
 
         A message received from the underlying connection of a
         WebSocketSession. data is the payload of the event; id is an
@@ -795,33 +796,35 @@ class WebSocketSession(object):
 
         Instance attributes (all initialized from the corresponding
         constructor parameters) are:
-        data: The payload of the event as an arbitrary application-specific
-              object. See also the deserialize() method.
-        id  : An identifier relating this event to some command. None is
-              special-cased to mean that this event cannot be identified.
-              See also the Command class for more details on reply matching.
+        data  : The payload of the event as an arbitrary application-specific
+                object. See also the deserialize() method.
+        connid: The ID of the connection the event received from.
+        id    : An identifier relating this event to some command. None is
+                special-cased to mean that this event cannot be identified.
+                See also the Command class for more details on reply matching.
         """
 
         @classmethod
-        def deserialize(cls, data):
+        def deserialize(cls, data, connid):
             """
-            deserialize(data) -> new instance
+            deserialize(data, connid) -> new instance
 
             Convert the given data from an application-specific on-the-wire
             format into an internal format.
 
-            The default implementation returns an instance with data unchanged
-            and an id of None.
+            The default implementation returns an instance with data
+            unchanged, connid passed on, and an id of None.
             """
-            return cls(data)
+            return cls(data, connid)
 
-        def __init__(self, data, id=None):
+        def __init__(self, data, connid, id=None):
             """
-            __init__(data, id=None) -> None
+            __init__(data, connid, id=None) -> None
 
             Instance initializer; see the class docstring for details.
             """
             self.data = data
+            self.connid = connid
             self.id = id
 
     @classmethod
@@ -901,9 +904,9 @@ class WebSocketSession(object):
                 cmd.state = CST_SENT
             self.scheduler.add_now(cmd.on_sent)
 
-    def _on_raw_message(self, msg):
+    def _on_raw_message(self, msg, connid):
         """
-        _on_raw_message(msg) -> None
+        _on_raw_message(msg, connid) -> None
 
         Event handler method invoked when a message is received.
 
@@ -913,7 +916,7 @@ class WebSocketSession(object):
         no such command), and garbage-collects the dispatched-to command (if
         any and as necessary).
         """
-        evt = self.Event.deserialize(msg)
+        evt = self.Event.deserialize(msg, connid)
         with self:
             cmd = self.commands.get(evt.id)
             if cmd is not None and cmd.state in (CST_NEW, CST_SENDING,
