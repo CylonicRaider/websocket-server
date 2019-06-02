@@ -686,6 +686,8 @@ class WebSocketSession(object):
     scheduler: The Scheduler responsible for running high-level callbacks.
     commands : An ordered mapping from ID-s to Command instances representing
                still-live commands.
+    queue    : A list of Command instance to be submitted when the connection
+               is established (populated during reconnects etc.).
     """
 
     class Command(object):
@@ -786,6 +788,34 @@ class WebSocketSession(object):
             """
             pass
 
+        def on_disconnect(self, transient, ok):
+            """
+            on_disconnect(transient, ok) -> bool
+
+            Event handler method invoked when the underlying connection has
+            been closed. transient and ok tells whether the close is
+            (presumably) temporary and *not* caused by an error, respectively.
+            The return value indicates whether the command is to be kept alive
+            until the next reconnect.
+
+            Executed on the scheduler thread. The default implementation
+            returns False (i.e. lets the command be discarded).
+            """
+            return False
+
+        def on_reconnect(self):
+            """
+            on_reconnect() -> bool
+
+            Event handler method invoked when the underlying connection has
+            been reestablished after a disconnect. The return value indicates
+            whether the command is to be resent.
+
+            Executed on the scheduler thread. The default implementation
+            returns False (i.e. suppresses resending).
+            """
+            return False
+
     class Event(object):
         """
         Event(data, connid, id=None) -> new instance
@@ -851,7 +881,9 @@ class WebSocketSession(object):
         self.conn = conn
         self.scheduler = scheduler
         self.commands = collections.OrderedDict()
+        self.queue = []
         self._lock = threading.RLock()
+        self._conn_open = None
         self._install_callbacks()
 
     def __enter__(self):
@@ -869,10 +901,12 @@ class WebSocketSession(object):
         Wire up callbacks for interesting events into this instance's
         connection and scheduler.
         """
-        self.conn.message_cb = self.scheduler.wrap(self._on_raw_message)
-        self.conn.error_cb = self.on_error
-        self.scheduler.on_error = lambda exc: self.on_error(
-            exc, ERRS_SCHEDULER, True)
+        conn, sched = self.conn, self.scheduler
+        conn.connected_cb = sched.wrap(self._on_connected)
+        conn.message_cb = sched.wrap(self._on_raw_message)
+        conn.disconnecting_cb = sched.wrap(self._on_disconnecting)
+        conn.error_cb = self.on_error
+        sched.on_error = lambda exc: self.on_error(exc, ERRS_SCHEDULER, True)
 
     def _on_command_sending(self, cmd):
         """
@@ -903,6 +937,50 @@ class WebSocketSession(object):
             if cmd.state in (CST_NEW, CST_SENDING):
                 cmd.state = CST_SENT
             self.scheduler.add_now(cmd.on_sent)
+
+    def _on_connected(self, connid, transient):
+        """
+        _on_connected(connid, transient) -> None
+
+        Event handler method invoked when a connection is established.
+
+        Executed on the scheduler thread.
+        """
+        with self:
+            conn = self.conn
+            if self._conn_open is None:
+                runlist = ()
+            else:
+                runlist = tuple(self.commands.values())
+            submitlist = tuple(self.queue)
+            self.queue[:] = []
+            self._conn_open = True
+        for cmd in runlist:
+            if cmd.on_reconnect():
+                self._do_submit(conn, cmd)
+        for cmd in submitlist:
+            self._do_submit(conn, cmd)
+
+    def _on_disconnecting(self, connid, transient, ok):
+        """
+        _on_disconnecting(connid, transient, ok) -> None
+
+        Event handler method invoked when a connection is about to be shut
+        down.
+
+        Executed on the scheduler thread; in particular, the connection is
+        no longer usable.
+        """
+        with self:
+            runlist = tuple(self.commands.values())
+            self._conn_open = False
+        rmlist = set()
+        for cmd in runlist:
+            if not cmd.on_disconnect(transient, ok):
+                rmlist.add(cmd.id)
+        with self:
+            for k in rmlist:
+                self.commands.pop(k, None)
 
     def _on_raw_message(self, msg, connid):
         """
@@ -953,12 +1031,14 @@ class WebSocketSession(object):
         """
         if not swallow: raise
 
-    def submit(self, cmd):
+    def _do_submit(self, conn, cmd):
         """
-        submit(cmd) -> Future
+        _do_submit(conn, cmd) -> None
 
-        Send the given Command instance into the underlying connection and
-        register it as waiting for responses (as necessary).
+        Internal method: Backend of submit().
+
+        If submit() is called while the underlying connection is not open,
+        the
         """
         with self:
             if cmd.id is not None and (cmd.responses is None or
@@ -966,9 +1046,23 @@ class WebSocketSession(object):
                 self.commands[cmd.id] = cmd
             if cmd.state == CST_NEW:
                 cmd.state = CST_SENDING
-        return self.conn.send_message(cmd.serialize(),
-                                      lambda: self._on_command_sending(cmd),
-                                      lambda: self._on_command_sent(cmd))
+        conn.send_message(cmd.serialize(),
+                          lambda: self._on_command_sending(cmd),
+                          lambda: self._on_command_sent(cmd))
+
+    def submit(self, cmd):
+        """
+        submit(cmd) -> None
+
+        Send the given Command instance into the underlying connection and
+        register it as waiting for responses (as necessary).
+        """
+        with self:
+            conn = self.conn
+            if not self._conn_open:
+                self.queue.append(cmd)
+                return
+        self._do_submit(conn, cmd)
 
     def connect(self, wait=True, **kwds):
         """
