@@ -692,7 +692,7 @@ class WebSocketSession(object):
 
     class Command(object):
         """
-        Command(data, id=None, responses=0) -> new instance
+        Command(data, id=None, responses=0, resendable=False) -> new instance
 
         A message sent from a WebSocketSession. data is the payload of the
         command; id is an identifier of the command (for recognizing
@@ -700,20 +700,27 @@ class WebSocketSession(object):
 
         Instance attributes (all initialized from the corresponding
         constructor parameters, if those exist) are:
-        data     : The payload of the command as an arbitrary
-                   application-specific object. See also the serialize()
-                   method.
-        id       : A unique identifier of the command as some hashable object.
-                   The value None is special-cased to mean that this command
-                   cannot be identified (and, thus, cannot receive responses).
-        responses: The amount of responses this command has yet to receive.
-                   WebSocketSession retains commands until their responses
-                   attribute drops to zero (in particular, commands
-                   initialized with responses=0 are forgotten immediately
-                   after submission). None is special-cased to mean
-                   arbitrarily many (such a command is never discarded).
-        state    : The processing state of this command, as a CST_* constant.
-                   Managed by the WebSocketSession owing this command.
+        data      : The payload of the command as an arbitrary
+                    application-specific object. See also the serialize()
+                    method.
+        id        : A unique identifier of the command as some hashable
+                    object. The value None is special-cased to mean that this
+                    command cannot be identified (and, thus, cannot receive
+                    responses).
+        responses : The amount of responses this command has yet to receive.
+                    WebSocketSession retains commands until their responses
+                    attribute drops to zero (in particular, commands
+                    initialized with responses=0 are forgotten immediately
+                    after submission). None is special-cased to mean
+                    arbitrarily many (such a command is never discarded).
+        resendable: Whether this command may be resent safely without causing
+                    unintended effects. An example of a resendable command
+                    might be a non-destructive query while a creation request
+                    might be non-resendable. Specific commands may choose to
+                    ignore this attribute and adjust themselves when
+                    on_reconnect() is invoked instead.
+        state     : The processing state of this command, as a CST_* constant.
+                    Managed by the WebSocketSession owing this command.
 
         Note that command responses are represented as instances of the Event
         class (as there is only one class for incoming frames and labelling
@@ -721,15 +728,16 @@ class WebSocketSession(object):
         the current naming scheme).
         """
 
-        def __init__(self, data, id=None, responses=0):
+        def __init__(self, data, id=None, responses=0, resendable=False):
             """
-            __init__(data, id=None, responses=0) -> None
+            __init__(data, id=None, responses=0, resendable=False) -> None
 
             Instance initializer; see the class docstring for details.
             """
             self.data = data
             self.id = id
             self.responses = responses
+            self.resendable = resendable
             self.state = CST_NEW
 
         def serialize(self):
@@ -795,13 +803,13 @@ class WebSocketSession(object):
             Event handler method invoked when the underlying connection has
             been closed. transient and ok tells whether the close is
             (presumably) temporary and *not* caused by an error, respectively.
-            The return value indicates whether the command is to be kept alive
-            until the next reconnect.
+            The return value indicates whether the command is *not* to be
+            discarded as obsolete.
 
             Executed on the scheduler thread. The default implementation
-            returns False (i.e. lets the command be discarded).
+            returns True iff the resendable attribute is true.
             """
-            return False
+            return self.resendable
 
         def on_reconnect(self):
             """
@@ -812,9 +820,9 @@ class WebSocketSession(object):
             whether the command is to be resent.
 
             Executed on the scheduler thread. The default implementation
-            returns False (i.e. suppresses resending).
+            returns True iff the resendable attribute is true.
             """
-            return False
+            return self.resendable
 
     class Event(object):
         """
