@@ -615,44 +615,45 @@ class ReconnectingWebSocket(object):
                 'ReconnectingWebSocket')
         return ret
 
-    def connect(self, url=None):
+    def connect_async(self, url=None):
         """
-        connect(url=None) -> Future
+        connect_async(url=None) -> Future
 
         Bring this instance into the "connected" state, creating a WebSocket
         connection (which will be renewed if it breaks before the next
-        disconnect() call) as necessary.
+        disconnect_async() call) as necessary.
 
         url, if not None, replaces the same-named instance attribute and is
         used as the URL future connections (including the one initiated by
         this method, if any) go to. If a connect is going on concurrently,
         it may or may not be redone in order to apply the new URL.
 
-        Concurrency note: connect() / reconnect() / disconnect() initiate
-        asynchronous actions and return quickly. If multiple calls are
-        submitted in rapid succession, the effects of individual calls may be
-        superseded by others or elided. Eventually, the last call (i.e. the
-        last to acquire the internal synchronization lock) will prevail. In
-        order to wait for the connection to finish, call the returned Future's
-        wait() method.
+        Concurrency note: connect_async() / reconnect_async() /
+        disconnect_async() initiate (as their names indicate) asynchronous
+        actions and return quickly. If multiple calls are submitted in rapid
+        succession, the effects of individual calls may be superseded by
+        others or elided. Eventually, the last call (i.e. the last to acquire
+        the internal synchronization lock) will prevail. In order to wait for
+        the connection to finish, call the returned Future's wait() method.
         """
         return self._cycle_connstates(connect=True, url=url)
 
-    def reconnect(self, url=None, ok=True):
+    def reconnect_async(self, url=None, ok=True):
         """
-        reconnect(url=None, ok=True) -> Future
+        reconnect_async(url=None, ok=True) -> Future
 
         Bring this instance into the "connected" state, forcing a
         disconnect-connect cycle if it is already connected.
 
-        See the notes for connect() and disconnect() for more details.
+        See the notes for connect_async() and disconnect_async() for more
+        details.
         """
         return self._cycle_connstates(disconnect=True, connect=True, url=url,
                                       disconnect_ok=ok)
 
-    def disconnect(self, ok=True):
+    def disconnect_async(self, ok=True):
         """
-        disconnect(ok=True) -> Future
+        disconnect_async(ok=True) -> Future
 
         Bring this instance into the "disconnected" state, closing the
         internal WebSocket connection if necessary.
@@ -660,7 +661,7 @@ class ReconnectingWebSocket(object):
         ok tells whether the close is normal (True) or caused by some sort of
         error (False).
 
-        See the notes for connect() (but in reverse) for more details.
+        See the notes for connect_async() (but in reverse) for more details.
         """
         return self._cycle_connstates(disconnect=True, disconnect_ok=ok)
 
@@ -1079,25 +1080,25 @@ class WebSocketSession(object):
         Establish an underlying connection. Returns a Future that resolves
         whenever the connection is established. wait indicates whether this
         call should block until that is the case. Additional keyword arguments
-        are forwarded to ReconnectingWebSocket.connect(); see there for
+        are forwarded to ReconnectingWebSocket.connect_async(); see there for
         details.
         """
-        return run_async(self.conn.connect, wait, **kwds)
+        return run_async(self.conn.connect_async, wait, **kwds)
 
     def reconnect(self, wait=True, **kwds):
         """
         reconnect(wait=True, **kwds) -> Future
 
         Re-establish the underlying connection. See connect() and
-        ReconnectingWebSocket.reconnect() for details.
+        ReconnectingWebSocket.reconnect_async() for details.
         """
-        return run_async(self.conn.reconnect, wait, **kwds)
+        return run_async(self.conn.reconnect_async, wait, **kwds)
 
     def disconnect(self, wait=True, **kwds):
         """
         disconnect(wait=True, **kwds) -> Future
 
         Close the underlying connection. See connect() and
-        ReconnectingWebSocket.disconnect() for details.
+        ReconnectingWebSocket.disconnect_async() for details.
         """
-        return run_async(self.conn.disconnect, wait, **kwds)
+        return run_async(self.conn.disconnect_async, wait, **kwds)
