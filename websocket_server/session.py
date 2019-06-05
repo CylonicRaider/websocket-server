@@ -127,7 +127,7 @@ class ReconnectingWebSocket(object):
     (excluding the "self" argument) by the event handlers' default
     implementations. Overriding methods are strongly advised to call the
     parent class' implementation to preserve this behavior (but see also
-    on_error()).
+    _on_error()).
 
     Read-only instance attributes are:
     state     : The current connection state as one of the SST_* constants.
@@ -162,12 +162,12 @@ class ReconnectingWebSocket(object):
         self.url = url
         self.protos = protos
         self.backoff = backoff_linear
-        self.connecting_cb = None
-        self.connected_cb = None
-        self.message_cb = None
-        self.disconnecting_cb = None
-        self.disconnected_cb = None
-        self.error_cb = None
+        self.on_connecting = None
+        self.on_connected = None
+        self.on_message = None
+        self.on_disconnecting = None
+        self.on_disconnected = None
+        self.on_error = None
         self.state = SST_IDLE
         self.state_goal = SST_DISCONNECTED
         self.conn = None
@@ -226,8 +226,8 @@ class ReconnectingWebSocket(object):
         is true, otherwise to SST_DISCONNECTED if disconnect is true,
         otherwise it is unmodified.
         """
-        def disconnect_cb():
-            self.on_disconnecting(disconnect_conn.id, connect, disconnect_ok)
+        def disconnect_task():
+            self._on_disconnecting(disconnect_conn.id, connect, disconnect_ok)
             self._do_disconnect(disconnect_conn, True)
         disconnect_conn = None
         with self:
@@ -273,7 +273,7 @@ class ReconnectingWebSocket(object):
                     self._wthread = spawn_daemon_thread(self._wthread_main,
                                                         self._wqueue)
         if disconnect_conn is not None:
-            self._run_wthread(disconnect_cb)
+            self._run_wthread(disconnect_task)
         return ret
 
     def _rthread_main(self):
@@ -314,11 +314,11 @@ class ReconnectingWebSocket(object):
                     self.state = SST_CONNECTING
                     params = self._conn_params()
                 # Connect.
-                self.on_connecting(transient)
+                self._on_connecting(transient)
                 try:
                     conn = self._do_connect(**params)
                 except Exception as exc:
-                    self.on_error(exc, ERRS_CONNECT, True)
+                    self._on_error(exc, ERRS_CONNECT, True)
                     self._sleep(self.backoff(conn_attempt), sleep_check)
                     conn_attempt += 1
                     continue
@@ -337,7 +337,7 @@ class ReconnectingWebSocket(object):
                     if self._connected is not None:
                         self._connected.set()
                         self._connected = None
-                self.on_connected(conn.id, transient)
+                self._on_connected(conn.id, transient)
                 # Read messages (unless we should disconnect immediately).
                 if do_read:
                     self._do_read_loop(conn)
@@ -350,7 +350,7 @@ class ReconnectingWebSocket(object):
                     self.conn = None
                 # Disconnect.
                 if run_dc_hook:
-                    self.on_disconnecting(conn.id, transient, ok)
+                    self._on_disconnecting(conn.id, transient, ok)
                 self._do_disconnect(conn)
                 conn = None
                 # Done disconnecting.
@@ -359,9 +359,9 @@ class ReconnectingWebSocket(object):
                     if self._disconnected is not None:
                         self._disconnected.set()
                         self._disconnected = None
-                self.on_disconnected(conn.id, transient, ok)
+                self._on_disconnected(conn.id, transient, ok)
         except Exception as exc:
-            self.on_error(exc, ERRS_RTHREAD)
+            self._on_error(exc, ERRS_RTHREAD)
         finally:
             detach()
 
@@ -385,7 +385,7 @@ class ReconnectingWebSocket(object):
                 try:
                     cb()
                 except Exception as exc:
-                    self.on_error(exc, ERRS_WRITE)
+                    self._on_error(exc, ERRS_WRITE)
         finally:
             with self:
                 if self._wthread is this_thread:
@@ -436,15 +436,16 @@ class ReconnectingWebSocket(object):
         _do_read_loop(conn) -> None
 
         Repeatedly read frames from the given WebSocket connection and pass
-        them into on_message; on EOF, return (without calling on_message).
+        them into _on_message(); on EOF, return (without calling
+        _on_message()).
         """
         while 1:
             try:
                 frame = conn.read_frame()
             except Exception as exc:
-                self.on_error(exc, ERRS_READ)
+                self._on_error(exc, ERRS_READ)
             if frame is None: break
-            self.on_message(frame, conn.id)
+            self._on_message(frame, conn.id)
 
     def _do_send(self, conn, data, before_cb, after_cb):
         """
@@ -501,9 +502,9 @@ class ReconnectingWebSocket(object):
             ret.run()
         return ret
 
-    def on_connecting(self, transient):
+    def _on_connecting(self, transient):
         """
-        on_connecting(transient) -> None
+        _on_connecting(transient) -> None
 
         Event handler method invoked before a connection is established.
         transient tells whether this is part of a reconnect (True) or an
@@ -513,11 +514,11 @@ class ReconnectingWebSocket(object):
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.connecting_cb, transient)
+        run_cb(self.on_connecting, transient)
 
-    def on_connected(self, connid, transient):
+    def _on_connected(self, connid, transient):
         """
-        on_connect(connid, transient) -> None
+        _on_connect(connid, transient) -> None
 
         Event handler method invoked when a connection is established.
         connid is the ID of the connection. transient tells whether this is
@@ -526,11 +527,11 @@ class ReconnectingWebSocket(object):
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.connected_cb, connid, transient)
+        run_cb(self.on_connected, connid, transient)
 
-    def on_message(self, msg, connid):
+    def _on_message(self, msg, connid):
         """
-        on_message(msg, connid) -> None
+        _on_message(msg, connid) -> None
 
         Event handler method invoked when a WebSocket message arrives. msg is
         a wsfile.Message containing the data that were received. connid is the
@@ -539,11 +540,11 @@ class ReconnectingWebSocket(object):
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.message_cb, msg, connid)
+        run_cb(self.on_message, msg, connid)
 
-    def on_disconnecting(self, connid, transient, ok):
+    def _on_disconnecting(self, connid, transient, ok):
         """
-        on_disconnecting(connid, transient, ok) -> None
+        _on_disconnecting(connid, transient, ok) -> None
 
         Event handler method invoked when a connection is about to be closed.
         connid is the ID of the connection. transient tells whether this is
@@ -554,11 +555,11 @@ class ReconnectingWebSocket(object):
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.disconnecting_cb, connid, transient, ok)
+        run_cb(self.on_disconnecting, connid, transient, ok)
 
-    def on_disconnected(self, connid, transient, ok):
+    def _on_disconnected(self, connid, transient, ok):
         """
-        on_disconnect(connid, transient, ok) -> None
+        _on_disconnect(connid, transient, ok) -> None
 
         Event handler method invoked when a connection has been closed.
         connid is the ID of the connection. transient tells whether this is
@@ -569,11 +570,11 @@ class ReconnectingWebSocket(object):
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.disconnected_cb, connid, transient, ok)
+        run_cb(self.on_disconnected, connid, transient, ok)
 
-    def on_error(self, exc, source, swallow=False):
+    def _on_error(self, exc, source, swallow=False):
         """
-        on_error(exc, source, swallow=False) -> None
+        _on_error(exc, source, swallow=False) -> None
 
         Event handler method invoked when an error occurs somewhere. exc is
         the exception object (sys.exc_info() can be used to retrieve more
@@ -588,7 +589,7 @@ class ReconnectingWebSocket(object):
         e.g., the type of the exception and the source. See also the
         module-level run_cb() convenience function.
         """
-        run_cb(self.error_cb, exc, source, swallow)
+        run_cb(self.on_error, exc, source, swallow)
         if not swallow: raise
 
     def send_message(self, data, before_cb=None, after_cb=None):
@@ -911,11 +912,11 @@ class WebSocketSession(object):
         connection and scheduler.
         """
         conn, sched = self.conn, self.scheduler
-        conn.connected_cb = sched.wrap(self._on_connected)
-        conn.message_cb = sched.wrap(self._on_raw_message)
-        conn.disconnecting_cb = sched.wrap(self._on_disconnecting)
-        conn.error_cb = self.on_error
-        sched.on_error = lambda exc: self.on_error(exc, ERRS_SCHEDULER, True)
+        conn.on_connected = sched.wrap(self._on_connected)
+        conn.on_message = sched.wrap(self._on_raw_message)
+        conn.on_disconnecting = sched.wrap(self._on_disconnecting)
+        conn.on_error = self._on_error
+        sched.on_error = lambda exc: self._on_error(exc, ERRS_SCHEDULER, True)
 
     def _on_command_sending(self, cmd):
         """
@@ -999,9 +1000,9 @@ class WebSocketSession(object):
 
         Executed on the scheduler thread. This implementation constructs an
         Event from msg, dispatches it to either a command with the same ID
-        (see Command.on_response()) or this instance's on_event() (if there is
-        no such command), and garbage-collects the dispatched-to command (if
-        any and as necessary).
+        (see Command.on_response()) or this instance's _on_event() (if there
+        is no such command), and garbage-collects the dispatched-to command
+        (if any and as necessary).
         """
         evt = self.Event.deserialize(msg, connid)
         with self:
@@ -1012,16 +1013,16 @@ class WebSocketSession(object):
         if cmd is not None:
             cmd.on_response(evt)
         else:
-            self.on_event(evt)
+            self._on_event(evt)
         with self:
             if cmd is not None and cmd.responses is not None:
                 cmd.responses -= 1
                 if cmd.responses <= 0:
                     self.commands.pop(evt.id, None)
 
-    def on_event(self, evt):
+    def _on_event(self, evt):
         """
-        on_event(evt) -> None
+        _on_event(evt) -> None
 
         Event handler method invoked when an Event that does not match any
         known command is received.
@@ -1031,12 +1032,12 @@ class WebSocketSession(object):
         """
         pass
 
-    def on_error(self, exc, source, swallow=False):
+    def _on_error(self, exc, source, swallow=False):
         """
-        on_error(exc, source, swallow=False) -> None
+        _on_error(exc, source, swallow=False) -> None
 
         Event handler method invoked when an error occurs. See
-        ReconnectingWebSocket.on_error() for details.
+        ReconnectingWebSocket._on_error() for details.
         """
         if not swallow: raise
 

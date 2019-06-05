@@ -524,6 +524,7 @@ class Scheduler(object):
         """
         self.queue = []
         self.cond = threading.Condition()
+        self.on_error = None
         self._references = 0
         self._seq = AtomicSequence(lock=self.cond)
 
@@ -621,17 +622,22 @@ class Scheduler(object):
             self.add_now(lambda: func(*_args, **_kwds))
         return scheduler_wrapper
 
-    def on_error(self, exc):
+    def _on_error(self, exc):
         """
-        on_error(exc) -> None
+        _on_error(exc) -> None
 
         Handle an error that occurred while executing a task's callback. exc
         is the Exception instance pertaining to the error; sys.exc_info() may
         be consulted as well.
 
-        The default implementation immediately re-raises exc.
+        The default implementation invoked the on_error instance attribute
+        unless that is None, or immediately re-raises exc if there is no error
+        handler installed.
         """
-        raise exc
+        if self.on_error is not None:
+            self.on_error(exc)
+        else:
+            raise exc
 
     def run(self):
         """
@@ -657,7 +663,7 @@ class Scheduler(object):
             try:
                 head.cb()
             except Exception as exc:
-                self.on_error(exc)
+                self._on_error(exc)
             finally:
                 if not head.daemon:
                     with self.cond:
