@@ -23,6 +23,7 @@ from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'SST_INTERRUPTED', 'SST_DISCONNECTING',
            'CST_NEW', 'CST_SENDING', 'CST_SENT', 'CST_CONFIRMED',
+           'CST_CANCELLED',
            'ERRS_RTHREAD', 'ERRS_CONNECT', 'ERRS_READ', 'ERRS_WRITE',
            'ERRS_SCHEDULER',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
@@ -39,6 +40,7 @@ CST_NEW       = 'NEW'
 CST_SENDING   = 'SENDING'
 CST_SENT      = 'SENT'
 CST_CONFIRMED = 'CONFIRMED'
+CST_CANCELLED = 'CANCELLED'
 
 ERRS_RTHREAD   = 'rthread'
 ERRS_CONNECT   = 'connect'
@@ -806,7 +808,7 @@ class WebSocketSession(object):
             been closed. transient and ok tells whether the close is
             (presumably) temporary and *not* caused by an error, respectively.
             The return value indicates whether the command is *not* to be
-            discarded as obsolete.
+            cancelled as obsolete.
 
             Executed on the scheduler thread. The default implementation
             returns True iff the resendable attribute is true.
@@ -825,6 +827,23 @@ class WebSocketSession(object):
             returns True iff the resendable attribute is true.
             """
             return self.resendable
+
+        def on_cancelled(self):
+            """
+            on_cancelled() -> None
+
+            Event handler method invoked when the command cannot be completed.
+
+            Aside from explicit cancellation, this might also occur, e.g.,
+            when the underlying connection breaks after the command has
+            started being sent but before a reply to the command arrives, and
+            the command is not safe-to-resend (see the resendable attribute).
+
+            Executed on the scheduler thread. The default implementation does
+            nothing. Other implementations might inspect the command's state
+            and make additional decisions.
+            """
+            pass
 
     class Event(object):
         """
@@ -918,36 +937,6 @@ class WebSocketSession(object):
         conn.on_error = self._on_error
         sched.on_error = lambda exc: self._on_error(exc, ERRS_SCHEDULER, True)
 
-    def _on_command_sending(self, cmd):
-        """
-        _on_command_sending(cmd) -> None
-
-        Event handler method invoked when the given command is about to be
-        sent. Executed synchronously just before the actual send.
-
-        The default implementation updates the command's state and schedules
-        its on_sending() method to be run.
-        """
-        with self:
-            if cmd.state == CST_NEW:
-                cmd.state = CST_SENDING
-            self.scheduler.add_now(cmd.on_sending)
-
-    def _on_command_sent(self, cmd):
-        """
-        _on_command_sent(cmd) -> None
-
-        Event handler method invoked when the given command has been
-        successfully sent. Executed synchronously just after the send.
-
-        The default implementation updates the command's state and schedules
-        its on_sent() method to be run.
-        """
-        with self:
-            if cmd.state in (CST_NEW, CST_SENDING):
-                cmd.state = CST_SENT
-            self.scheduler.add_now(cmd.on_sent)
-
     def _on_connected(self, connid, transient):
         """
         _on_connected(connid, transient) -> None
@@ -966,8 +955,10 @@ class WebSocketSession(object):
             self.queue[:] = []
             self._conn_open = True
         for cmd in runlist:
-            if cmd.on_reconnect():
-                self._do_submit(conn, cmd)
+            if not cmd.on_reconnect():
+                self._cancel_command(cmd)
+                continue
+            self._do_submit(conn, cmd)
         for cmd in submitlist:
             self._do_submit(conn, cmd)
 
@@ -984,13 +975,9 @@ class WebSocketSession(object):
         with self:
             runlist = tuple(self.commands.values())
             self._conn_open = False
-        rmlist = set()
         for cmd in runlist:
             if not cmd.on_disconnect(transient, ok):
-                rmlist.add(cmd.id)
-        with self:
-            for k in rmlist:
-                self.commands.pop(k, None)
+                self._cancel_command(cmd)
 
     def _on_raw_message(self, msg, connid):
         """
@@ -1040,6 +1027,56 @@ class WebSocketSession(object):
         ReconnectingWebSocket._on_error() for details.
         """
         if not swallow: raise
+
+    def _cancel_command(self, cmd):
+        """
+        _cancel_command(cmd) -> None
+
+        Cancel the given command.
+
+        This transitions the command into the CANCELLED state, removes
+        references to it from internal indexes, and calls the command's
+        on_cancelled() handler.
+
+        Executed on the scheduler thread.
+        """
+        with self:
+            cmd.state = CST_CANCELLED
+            self.commands.pop(cmd.id, None)
+            # Not removing from self.queue because commands in there have no
+            # reason to be cancelled -- they have either never touched the
+            # network or have been removed by the reconnect handler anyway.
+        cmd.on_cancelled()
+
+    def _on_command_sending(self, cmd):
+        """
+        _on_command_sending(cmd) -> None
+
+        Event handler method invoked when the given command is about to be
+        sent. Executed synchronously just before the actual send.
+
+        The default implementation updates the command's state and schedules
+        its on_sending() method to be run.
+        """
+        with self:
+            if cmd.state == CST_NEW:
+                cmd.state = CST_SENDING
+            self.scheduler.add_now(cmd.on_sending)
+
+    def _on_command_sent(self, cmd):
+        """
+        _on_command_sent(cmd) -> None
+
+        Event handler method invoked when the given command has been
+        successfully sent. Executed synchronously just after the send.
+
+        The default implementation updates the command's state and schedules
+        its on_sent() method to be run.
+        """
+        with self:
+            if cmd.state in (CST_NEW, CST_SENDING):
+                cmd.state = CST_SENT
+            self.scheduler.add_now(cmd.on_sent)
 
     def _do_submit(self, conn, cmd):
         """
