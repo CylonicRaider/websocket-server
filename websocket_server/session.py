@@ -800,20 +800,22 @@ class WebSocketSession(object):
             """
             pass
 
-        def on_disconnect(self, transient, ok):
+        def on_disconnect(self, transient, ok, safe):
             """
-            on_disconnect(transient, ok) -> bool
+            on_disconnect(transient, ok, safe) -> bool
 
             Event handler method invoked when the underlying connection has
             been closed. transient and ok tells whether the close is
-            (presumably) temporary and *not* caused by an error, respectively.
-            The return value indicates whether the command is *not* to be
-            cancelled as obsolete.
+            (presumably) temporary and *not* caused by an error, respectively;
+            safe tells whether the command is in a state where it may be
+            resent safely (i.e. has not been (perhaps partially) sent without
+            a response). The return value indicates whether the command is
+            *not* to be cancelled as obsolete.
 
             Executed on the scheduler thread. The default implementation
-            returns True iff the resendable attribute is true.
+            returns True iff any of the resendable attribute or safe is true.
             """
-            return self.resendable
+            return self.resendable or safe
 
         def on_reconnect(self):
             """
@@ -824,9 +826,10 @@ class WebSocketSession(object):
             whether the command is to be resent.
 
             Executed on the scheduler thread. The default implementation
-            returns True iff the resendable attribute is true.
+            always returns True (relying on on_disconnect() to filter out
+            not-safe-to-resend commands).
             """
-            return self.resendable
+            return True
 
         def on_cancelled(self):
             """
@@ -972,11 +975,14 @@ class WebSocketSession(object):
         Executed on the scheduler thread; in particular, the connection is
         no longer usable.
         """
+        def can_resend(cmd):
+            return cmd.state not in (CST_SENDING, CST_SENT)
         with self:
-            runlist = tuple(self.commands.values())
+            runlist = [(cmd, can_resend(cmd))
+                       for cmd in self.commands.values()]
             self._conn_open = False
-        for cmd in runlist:
-            if not cmd.on_disconnect(transient, ok):
+        for cmd, safe in runlist:
+            if not cmd.on_disconnect(transient, ok, safe):
                 self._cancel_command(cmd)
 
     def _on_raw_message(self, msg, connid):
