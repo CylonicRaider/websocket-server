@@ -98,6 +98,8 @@ def backoff_exponential(n):
     """
     return 2 ** n
 
+# Here be concurrency dragons.
+
 class ReconnectingWebSocket(object):
     """
     ReconnectingWebSocket(url, protos=None) -> new instance
