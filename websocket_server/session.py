@@ -42,11 +42,11 @@ CST_SENT      = 'SENT'
 CST_CONFIRMED = 'CONFIRMED'
 CST_CANCELLED = 'CANCELLED'
 
-ERRS_RTHREAD   = 'rthread'
-ERRS_CONNECT   = 'connect'
-ERRS_READ      = 'read'
-ERRS_WRITE     = 'write'
-ERRS_SCHEDULER = 'scheduler'
+ERRS_RTHREAD    = 'rthread'
+ERRS_WS_CONNECT = 'connect'
+ERRS_WS_READ    = 'ws_read'
+ERRS_WS_WRITE   = 'ws_write'
+ERRS_SCHEDULER  = 'scheduler'
 
 def run_cb(_func, *_args, **_kwds):
     """
@@ -322,7 +322,7 @@ class ReconnectingWebSocket(object):
                 try:
                     conn = self._do_connect(**params)
                 except Exception as exc:
-                    self._on_error(exc, ERRS_CONNECT, True)
+                    self._on_error(exc, ERRS_WS_CONNECT, True)
                     self._sleep(self.backoff(conn_attempt), sleep_check)
                     conn_attempt += 1
                     continue
@@ -389,7 +389,9 @@ class ReconnectingWebSocket(object):
                 try:
                     cb()
                 except Exception as exc:
-                    self._on_error(exc, ERRS_WRITE)
+                    swallow = isinstance(exc, IOError)
+                    self._on_error(exc, ERRS_WS_WRITE, swallow)
+                    if swallow: break
         finally:
             with self:
                 if self._wthread is this_thread:
@@ -447,13 +449,15 @@ class ReconnectingWebSocket(object):
             try:
                 frame = conn.read_frame()
             except Exception as exc:
-                self._on_error(exc, ERRS_READ)
+                swallow = isinstance(exc, IOError)
+                self._on_error(exc, ERRS_WS_READ, swallow)
+                if swallow: break
             if frame is None: break
             self._on_message(frame, conn.id)
 
     def _do_send(self, conn, data, before_cb, after_cb):
         """
-        _do_send(conn, data) -> None
+        _do_send(conn, data, before_cb, after_cb) -> None
 
         Backend of the send_message() method. This (synchronously) submits
         data into the WebSocketFile conn using an appropriate frame type and
@@ -492,8 +496,10 @@ class ReconnectingWebSocket(object):
         state does not match, None is returned and cb is not run. Otherwise,
         this returns a Future wrapping the return value of the callback.
 
-        If there is no reader thread (but check_state is satisfied), cb is
-        executed synchronously.
+        If there is no writer thread (but check_state is satisfied), cb is
+        executed synchronously. If there *is* a writer thread, note that
+        queued calls may be silently discarded in the event of a sudden
+        disconnect.
         """
         ret = Future(cb)
         with self:
