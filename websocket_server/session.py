@@ -24,7 +24,7 @@ __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'SST_INTERRUPTED', 'SST_DISCONNECTING',
            'CST_NEW', 'CST_SENDING', 'CST_SENT', 'CST_CONFIRMED',
            'CST_CANCELLED',
-           'ERRS_RTHREAD', 'ERRS_CONNECT', 'ERRS_READ', 'ERRS_WRITE',
+           'ERRS_RTHREAD', 'ERRS_WS_CONNECT', 'ERRS_WS_RECV', 'ERRS_WS_SEND',
            'ERRS_SCHEDULER',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
            'ReconnectingWebSocket', 'WebSocketSession']
@@ -44,8 +44,8 @@ CST_CANCELLED = 'CANCELLED'
 
 ERRS_RTHREAD    = 'rthread'
 ERRS_WS_CONNECT = 'connect'
-ERRS_WS_READ    = 'ws_read'
-ERRS_WS_WRITE   = 'ws_write'
+ERRS_WS_RECV    = 'ws_recv'
+ERRS_WS_SEND    = 'ws_send'
 ERRS_SCHEDULER  = 'scheduler'
 
 def run_cb(_func, *_args, **_kwds):
@@ -390,7 +390,7 @@ class ReconnectingWebSocket(object):
                     cb()
                 except Exception as exc:
                     swallow = isinstance(exc, IOError)
-                    self._on_error(exc, ERRS_WS_WRITE, swallow)
+                    self._on_error(exc, ERRS_WS_SEND, swallow)
                     if swallow: break
         finally:
             with self:
@@ -450,7 +450,7 @@ class ReconnectingWebSocket(object):
                 frame = conn.read_frame()
             except Exception as exc:
                 swallow = isinstance(exc, IOError)
-                self._on_error(exc, ERRS_WS_READ, swallow)
+                self._on_error(exc, ERRS_WS_RECV, swallow)
                 if swallow: break
             if frame is None: break
             self._on_message(frame, conn.id)
@@ -825,13 +825,13 @@ class WebSocketSession(object):
             """
             return self.resendable or safe
 
-        def on_reconnect(self):
+        def on_connect(self):
             """
-            on_reconnect() -> bool
+            on_connect() -> bool
 
             Event handler method invoked when the underlying connection has
-            been reestablished after a disconnect. The return value indicates
-            whether the command is to be resent.
+            been established (in particular after a disconnect). The return
+            value indicates whether the command is to be (re-)sent.
 
             Executed on the scheduler thread. The default implementation
             always returns True (relying on on_disconnect() to filter out
@@ -921,9 +921,9 @@ class WebSocketSession(object):
         self.conn = conn
         self.scheduler = scheduler
         self.commands = collections.OrderedDict()
-        self.queue = []
+        self.queue = collections.deque()
+        self._send_queued = False
         self._lock = threading.RLock()
-        self._conn_open = None
         self._install_callbacks()
 
     def __enter__(self):
@@ -957,21 +957,18 @@ class WebSocketSession(object):
         Executed on the scheduler thread.
         """
         with self:
-            conn = self.conn
-            if self._conn_open is None:
-                runlist = ()
-            else:
-                runlist = tuple(self.commands.values())
-            submitlist = tuple(self.queue)
-            self.queue[:] = []
-            self._conn_open = True
+            runlist = tuple(self.commands.values())
+        sendlist = []
         for cmd in runlist:
-            if not cmd.on_reconnect():
+            if not cmd.on_connect():
                 self._cancel_command(cmd)
                 continue
-            self._do_submit(conn, cmd)
-        for cmd in submitlist:
-            self._do_submit(conn, cmd)
+            sendlist.append(cmd)
+        with self:
+            already_pending = frozenset(self.queue)
+            self.queue.extend(cmd for cmd in sendlist
+                              if cmd not in already_pending)
+        self._do_submit()
 
     def _on_disconnecting(self, connid, transient, ok):
         """
@@ -988,7 +985,7 @@ class WebSocketSession(object):
         with self:
             runlist = [(cmd, can_resend(cmd))
                        for cmd in self.commands.values()]
-            self._conn_open = False
+            self._send_queued = False
         for cmd, safe in runlist:
             if not cmd.on_disconnect(transient, ok, safe):
                 self._cancel_command(cmd)
@@ -1091,22 +1088,21 @@ class WebSocketSession(object):
             if cmd.state in (CST_NEW, CST_SENDING):
                 cmd.state = CST_SENT
             self.scheduler.add_now(cmd.on_sent)
+            self.queue.popleft()
+            self._send_queued = False
+        self._do_submit()
 
-    def _do_submit(self, conn, cmd):
+    def _do_submit(self):
         """
-        _do_submit(conn, cmd) -> None
+        _do_submit() -> None
 
         Internal method: Backend of submit().
-
-        If submit() is called while the underlying connection is not open,
-        the
         """
         with self:
-            if cmd.id is not None and (cmd.responses is None or
-                                       cmd.responses > 0):
-                self.commands[cmd.id] = cmd
-            if cmd.state == CST_NEW:
-                cmd.state = CST_SENDING
+            if not self.queue or self._send_queued: return
+            conn = self.conn
+            cmd = self.queue[0]
+            self._send_queued = True
         conn.send_message(cmd.serialize(),
                           lambda: self._on_command_sending(cmd),
                           lambda: self._on_command_sent(cmd))
@@ -1119,11 +1115,11 @@ class WebSocketSession(object):
         register it as waiting for responses (as necessary).
         """
         with self:
-            conn = self.conn
-            if not self._conn_open:
-                self.queue.append(cmd)
-                return
-        self._do_submit(conn, cmd)
+            if cmd.id is not None and (cmd.responses is None or
+                                       cmd.responses > 0):
+                self.commands[cmd.id] = cmd
+            self.queue.append(cmd)
+        self._do_submit()
 
     def connect(self, wait=True, **kwds):
         """
