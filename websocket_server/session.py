@@ -12,7 +12,7 @@ endpoint, retrying commands whose results may have been missed, etc.
 This module is NYI.
 """
 
-import time
+import sys, time
 import collections
 import uuid
 import threading
@@ -22,8 +22,8 @@ from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 
 __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'SST_INTERRUPTED', 'SST_DISCONNECTING',
-           'CST_NEW', 'CST_SENDING', 'CST_SENT', 'CST_CONFIRMED',
-           'CST_CANCELLED',
+           'CST_NEW', 'CST_SENDING', 'CST_SENT', 'CST_SEND_FAILED',
+           'CST_CONFIRMED', 'CST_CANCELLED',
            'ERRS_RTHREAD', 'ERRS_WS_CONNECT', 'ERRS_WS_RECV', 'ERRS_WS_SEND',
            'ERRS_SCHEDULER',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
@@ -36,11 +36,12 @@ SST_CONNECTED     = 'CONNECTED'
 SST_INTERRUPTED   = 'INTERRUPTED'
 SST_DISCONNECTING = 'DISCONNECTING'
 
-CST_NEW       = 'NEW'
-CST_SENDING   = 'SENDING'
-CST_SENT      = 'SENT'
-CST_CONFIRMED = 'CONFIRMED'
-CST_CANCELLED = 'CANCELLED'
+CST_NEW         = 'NEW'
+CST_SENDING     = 'SENDING'
+CST_SENT        = 'SENT'
+CST_SEND_FAILED = 'SEND_FAILED'
+CST_CONFIRMED   = 'CONFIRMED'
+CST_CANCELLED   = 'CANCELLED'
 
 ERRS_RTHREAD    = 'rthread'
 ERRS_WS_CONNECT = 'connect'
@@ -465,12 +466,15 @@ class ReconnectingWebSocket(object):
         """
         if before_cb is not None:
             before_cb()
-        if isinstance(data, bytes):
-            conn.write_binary_frame(data)
-        else:
-            conn.write_text_frame(data)
-        if after_cb is not None:
-            after_cb()
+        try:
+            if isinstance(data, bytes):
+                conn.write_binary_frame(data)
+            else:
+                conn.write_text_frame(data)
+        finally:
+            ok = (sys.exc_info()[0] is not None)
+            if after_cb is not None:
+                after_cb(ok)
 
     def _do_disconnect(self, conn, asynchronous=False):
         """
@@ -610,8 +614,10 @@ class ReconnectingWebSocket(object):
         chosen automatically depending on whether data is a byte or Unicode
         string. The send is asynchronous; this returns a Future that resolves
         when it finishes. before_cb is invoked (if not None and with no
-        arguments) immediately before sending the message, after_cb (with the
-        same notes as before_cb) is invoked immediately after sending it.
+        arguments) immediately before sending the message, after_cb (if not
+        None, and with a single Boolean argument that tells whether sending
+        the message was successful, i.e. whether there was *no* exception)
+        immediately after.
 
         In order to send messages, the instance must be in the CONNECTED
         state; if it is not, an exception is raised. All sends and callbacks
@@ -780,12 +786,13 @@ class WebSocketSession(object):
             """
             pass
 
-        def on_sent(self):
+        def on_sent(self, ok):
             """
-            on_sent() -> None
+            on_sent(ok) -> None
 
-            Event handler method invoked when the command has been
-            successfully sent.
+            Event handler method invoked when the command has been sent (or it
+            has been tried to send it). ok tells whether the send has actually
+            been successful.
 
             Note that a server might respond to the command before it has been
             fully received (or transmitted); in particular, on_response()
@@ -981,7 +988,7 @@ class WebSocketSession(object):
         no longer usable.
         """
         def can_resend(cmd):
-            return cmd.state not in (CST_SENDING, CST_SENT)
+            return cmd.state not in (CST_SENDING, CST_SENT, CST_SEND_FAILED)
         with self:
             runlist = [(cmd, can_resend(cmd))
                        for cmd in self.commands.values()]
@@ -1005,8 +1012,10 @@ class WebSocketSession(object):
         evt = self.Event.deserialize(msg, connid)
         with self:
             cmd = self.commands.get(evt.id)
+            # A send that looks like it failed to us might manage to transfer
+            # enough data to identify the command nonetheless.
             if cmd is not None and cmd.state in (CST_NEW, CST_SENDING,
-                                                 CST_SENT):
+                                                 CST_SENT, CST_SEND_FAILED):
                 cmd.state = CST_CONFIRMED
         if cmd is not None:
             cmd.on_response(evt)
@@ -1070,24 +1079,25 @@ class WebSocketSession(object):
         its on_sending() method to be run.
         """
         with self:
-            if cmd.state == CST_NEW:
+            if cmd.state in (CST_NEW, CST_CONFIRMED, CST_SEND_FAILED):
                 cmd.state = CST_SENDING
             self.scheduler.add_now(cmd.on_sending)
 
-    def _on_command_sent(self, cmd):
+    def _on_command_sent(self, cmd, ok):
         """
-        _on_command_sent(cmd) -> None
+        _on_command_sent(cmd, ok) -> None
 
         Event handler method invoked when the given command has been
-        successfully sent. Executed synchronously just after the send.
+        sent. ok tels whether the send was successful.
 
-        The default implementation updates the command's state and schedules
-        its on_sent() method to be run.
+        Executed synchronously just after the send. The default implementation
+        updates the command's state and schedules its on_sent() method to be
+        run.
         """
         with self:
             if cmd.state in (CST_NEW, CST_SENDING):
-                cmd.state = CST_SENT
-            self.scheduler.add_now(cmd.on_sent)
+                cmd.state = CST_SENT if ok else CST_SEND_FAILED
+            self.scheduler.add_now(lambda: cmd.on_sent(ok))
             self.queue.popleft()
             self._send_queued = False
         self._do_submit()
@@ -1105,7 +1115,7 @@ class WebSocketSession(object):
             self._send_queued = True
         conn.send_message(cmd.serialize(),
                           lambda: self._on_command_sending(cmd),
-                          lambda: self._on_command_sent(cmd))
+                          lambda ok: self._on_command_sent(cmd, ok))
 
     def submit(self, cmd):
         """
