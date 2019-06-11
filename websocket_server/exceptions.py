@@ -5,7 +5,6 @@
 Exceptions.
 """
 
-# For __init__
 __all__ = ['WebSocketError', 'ProtocolError', 'InvalidDataError',
            'ConnectionClosedError']
 
@@ -18,7 +17,8 @@ class ProtocolError(WebSocketError):
     """
     Exception for failure of the other side to adher to the protocol.
 
-    The "code" attribute contains the error code, or None.
+    The "code" attribute contains the error code (a CLOSE_* from the
+    constants module) or None.
     """
 
     def __init__(self, message, code=None):
@@ -39,5 +39,5 @@ class InvalidDataError(ProtocolError, ValueError):
 
 class ConnectionClosedError(WebSocketError):
     """
-    Raised if trying to write a message after the connection closed.
+    Raised when trying to write a message after the connection closed.
     """

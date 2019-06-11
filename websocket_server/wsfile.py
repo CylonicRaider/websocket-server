@@ -777,7 +777,7 @@ class WebSocketFile(object):
         if wait:
             with self._rdlock:
                 while self.read_single_frame(): pass
-            self.close_ex()
+            self.close_ex(wait=False)
 
     def close(self, message=None, wait=True):
         """

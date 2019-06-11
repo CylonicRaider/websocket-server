@@ -137,7 +137,7 @@ class CaseDict(collections.MutableMapping):
 
         See class docstring for details.
         """
-        super(CaseDict, _self).__init__()
+        collections.MutableMapping.__init__(_self)
         _self._data = dict(_source, **_update)
         _self._keys = dict((k.lower(), k) for k in _self._data)
 
