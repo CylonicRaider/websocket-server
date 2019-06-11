@@ -585,7 +585,7 @@ class WebSocketFile(object):
         "Used internally."
         self.error(message)
         # Assure execution does not continue.
-        raise RuntimeError('error() did return')
+        raise RuntimeError('error() returned')
 
     def error(self, message, code=constants.CLOSE_PROTOCOL_FAILURE):
         """
@@ -596,6 +596,9 @@ class WebSocketFile(object):
         This method is called from read_single_frame() if an invalid
         frame is detected.
         """
+        # We will hardly be able to interpret anything the other side emits
+        # at this point.
+        self._read_close = True
         self.close_ex(code, message)
         raise ProtocolError(message, code=code)
 

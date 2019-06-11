@@ -18,6 +18,7 @@ import uuid
 import threading
 
 from . import client
+from .exceptions import ProtocolError, ConnectionClosedError
 from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 
 __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
@@ -48,6 +49,10 @@ ERRS_WS_CONNECT = 'connect'
 ERRS_WS_RECV    = 'ws_recv'
 ERRS_WS_SEND    = 'ws_send'
 ERRS_SCHEDULER  = 'scheduler'
+
+SWALLOW_CLASSES_CONNECT = (IOError, ProtocolError)
+SWALLOW_CLASSES_RECV    = (IOError,)
+SWALLOW_CLASSES_SEND    = (IOError, ProtocolError, ConnectionClosedError)
 
 def run_cb(_func, *_args, **_kwds):
     """
@@ -323,7 +328,8 @@ class ReconnectingWebSocket(object):
                 try:
                     conn = self._do_connect(**params)
                 except Exception as exc:
-                    self._on_error(exc, ERRS_WS_CONNECT, True)
+                    swallow = isinstance(exc, SWALLOW_CLASSES_CONNECT)
+                    self._on_error(exc, ERRS_WS_CONNECT, swallow)
                     self._sleep(self.backoff(conn_attempt), sleep_check)
                     conn_attempt += 1
                     continue
@@ -390,9 +396,9 @@ class ReconnectingWebSocket(object):
                 try:
                     cb()
                 except Exception as exc:
-                    swallow = isinstance(exc, IOError)
+                    swallow = isinstance(exc, SWALLOW_CLASSES_SEND)
                     self._on_error(exc, ERRS_WS_SEND, swallow)
-                    if swallow: break
+                    break
         finally:
             with self:
                 if self._wthread is this_thread:
@@ -450,9 +456,9 @@ class ReconnectingWebSocket(object):
             try:
                 frame = conn.read_frame()
             except Exception as exc:
-                swallow = isinstance(exc, IOError)
+                swallow = isinstance(exc, SWALLOW_CLASSES_RECV)
                 self._on_error(exc, ERRS_WS_RECV, swallow)
-                if swallow: break
+                break
             if frame is None: break
             self._on_message(frame, conn.id)
 
