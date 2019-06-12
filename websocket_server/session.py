@@ -400,9 +400,19 @@ class ReconnectingWebSocket(object):
                     self._on_error(exc, ERRS_WS_SEND, swallow)
                     break
         finally:
+            close_conn = None
             with self:
                 if self._wthread is this_thread:
                     self._wthread = None
+                    self._wqueue = None
+                    if self.state == SST_CONNECTED:
+                        self.state = SST_INTERRUPTED
+                        close_conn = self.conn
+                        close_transient = (self.state_goal == SST_CONNECTED)
+            if close_conn is not None:
+                # ok is False as this is not an orderly disconnect.
+                self._on_disconnecting(close_conn.id, close_transient, False)
+                self._do_disconnect(close_conn, True)
 
     def _conn_params(self):
         """
