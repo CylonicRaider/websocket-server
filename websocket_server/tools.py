@@ -705,8 +705,7 @@ class Future(object):
     value   : The object enclosed by this Future, or None is not computed yet.
     state   : The computation state of this Future (one of the ST_PENDING ->
               ST_COMPUTING -> ST_DONE constants). Note that the value might
-              change immediately after being accessed. See also the pending()
-              method.
+              change immediately after being accessed.
     done_cbs: A list of callbacks to be run whenever this Future resolves.
               Each is given the value resolved to as the only positional
               argument. See also add_done_cb().
@@ -715,8 +714,6 @@ class Future(object):
     ST_PENDING   = 'PENDING'
     ST_COMPUTING = 'COMPUTING'
     ST_DONE      = 'DONE'
-
-    _PENDING_MAP = {ST_PENDING: True, ST_COMPUTING: Ellipsis, ST_DONE: False}
 
     class Timeout(Exception):
         """
@@ -768,24 +765,6 @@ class Future(object):
         if not self._set(v, self.ST_COMPUTING):
             raise AssertionError('Future has gotten into an invalid state')
         return True
-
-    def pending(self):
-        """
-        pending() -> bool or Ellipsis
-
-        Return whether this Future is still pending. The return value is one
-        of
-        True     if the Future is pending (and not being computed
-                 concurrently),
-        Ellipsis if the Future is not done (and being computed concurrently;
-                 remark that Ellipsis is truthy), or
-        False    if the Future is fully resolved.
-
-        NOTE that the state queried by this method might change immediately
-             after it has been called.
-        """
-        with self._cond:
-            return self._PENDING_MAP[self.state]
 
     def get(self, default=None):
         """
