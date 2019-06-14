@@ -886,6 +886,15 @@ class EOFQueue(object):
         self._items = collections.deque()
         self._eof = False
 
+    def clear(self):
+        """
+        clear() -> None
+
+        Remove all items from the queue. This operation always succeeds.
+        """
+        with self._cond:
+            self._items.clear()
+
     def get(self):
         """
         get() -> object or EOFError
