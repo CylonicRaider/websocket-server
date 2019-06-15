@@ -26,7 +26,7 @@ __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'CST_NEW', 'CST_SENDING', 'CST_SENT', 'CST_SEND_FAILED',
            'CST_CONFIRMED', 'CST_CANCELLED',
            'ERRS_RTHREAD', 'ERRS_WS_CONNECT', 'ERRS_WS_RECV', 'ERRS_WS_SEND',
-           'ERRS_SCHEDULER',
+           'ERRS_SCHEDULER', 'ERRS_SERIALIZE',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
            'ReconnectingWebSocket', 'WebSocketSession']
 
@@ -49,6 +49,7 @@ ERRS_WS_CONNECT = 'connect'
 ERRS_WS_RECV    = 'ws_recv'
 ERRS_WS_SEND    = 'ws_send'
 ERRS_SCHEDULER  = 'scheduler'
+ERRS_SERIALIZE  = 'serialize'
 
 SWALLOW_CLASSES_CONNECT = (IOError, ProtocolError)
 SWALLOW_CLASSES_RECV    = (IOError,)
@@ -210,11 +211,11 @@ class ReconnectingWebSocket(object):
         interrupted by notifying it.
         """
         if check is None: check = lambda: True
-        deadline = time.time() + check
+        deadline = time.time() + timeout
         with self:
             while check():
                 now = time.time()
-                if now > deadline: break
+                if now >= deadline: break
                 self._cond.wait(deadline - now)
 
     def _cycle_connstates(self, disconnect=False, connect=False, url=None,
@@ -270,8 +271,9 @@ class ReconnectingWebSocket(object):
                     # Wake up potentially sleeping reader thread.
                     self._cond.notifyAll()
                 elif self.state == SST_CONNECTED:
+                    # Ensure the reader thread will be eventually woken;
+                    # mark that that is going to happen.
                     self.state = SST_INTERRUPTED
-                    # Ensure the reader thread will be eventually woken.
                     disconnect_conn = self.conn
             # Connect if told to; this amounts to spawning the reader thread
             # and letting it do its work.
@@ -296,14 +298,14 @@ class ReconnectingWebSocket(object):
         def detach(do_disconnect=True):
             "Clean up instance state pointing at the existence of this thread"
             with self:
-                if self._rthread is not this_thread: return
-                self.state = SST_IDLE
-                self._rthread = None
-                self.conn = None
-                if self._wthread is not None:
-                    self._wqueue.close()
-                    self._wthread = None
-                    self._wqueue = None
+                if self._rthread is this_thread:
+                    self.state = SST_IDLE
+                    self._rthread = None
+                    self.conn = None
+                    if self._wthread is not None:
+                        self._wqueue.close()
+                        self._wthread = None
+                        self._wqueue = None
             if conn is not None and do_disconnect:
                 self._do_disconnect(conn)
         def sleep_check():
@@ -315,7 +317,7 @@ class ReconnectingWebSocket(object):
         conn_attempt = 0
         try:
             while 1:
-                # Prepare for connecting or detach.
+                # Prepare for connecting, or detach.
                 with self:
                     # Detach if requested.
                     if self.state_goal != SST_CONNECTED:
@@ -337,16 +339,16 @@ class ReconnectingWebSocket(object):
                     conn_attempt = 0
                 # Done connecting.
                 with self:
-                    new_params = self._conn_params()
-                    do_read = (new_params == params)
                     if self.state_goal == SST_CONNECTED:
                         self._disconnect_ok = True
+                        new_params = self._conn_params()
+                        do_read = (new_params == params)
                     else:
                         do_read = False
                     self.state = SST_CONNECTED
                     self.conn = conn
                     if self._connected is not None:
-                        self._connected.set()
+                        self._connected.set(conn.id)
                         self._connected = None
                 self._on_connected(conn.id, transient)
                 # Read messages (unless we should disconnect immediately).
@@ -360,17 +362,22 @@ class ReconnectingWebSocket(object):
                     self.state = SST_DISCONNECTING
                     self.conn = None
                 # Disconnect.
+                # If the disconnect is caused by a protocol violation by the
+                # other side, the underlying WebSocketFile has put itself into
+                # a state where it does try to read a confirmation so that we
+                # do not have to take particular care of this.
                 if run_dc_hook:
                     self._on_disconnecting(conn.id, transient, ok)
                 self._do_disconnect(conn)
+                old_conn_id = conn.id
                 conn = None
                 # Done disconnecting.
                 with self:
                     self.state = SST_DISCONNECTED
                     if self._disconnected is not None:
-                        self._disconnected.set()
+                        self._disconnected.set(old_conn_id)
                         self._disconnected = None
-                self._on_disconnected(conn.id, transient, ok)
+                self._on_disconnected(old_conn_id, transient, ok)
         except Exception as exc:
             self._on_error(exc, ERRS_RTHREAD)
         finally:
@@ -398,7 +405,7 @@ class ReconnectingWebSocket(object):
                     dc_transient = (self.state_goal == SST_CONNECTED)
                     queue.clear()
             if dc_conn is not None:
-                # ok is False as this is not an orderly disconnect.
+                # ok is always False as this is not an orderly disconnect.
                 self._on_disconnecting(dc_conn.id, dc_transient, False)
                 self._do_disconnect(dc_conn, True)
             return True
@@ -511,6 +518,8 @@ class ReconnectingWebSocket(object):
         Concurrency note: As this method may be called to interrupt an ongoing
         connection, it should be particularly cautious about thread safety.
         """
+        # Fortunately, WebSocketFile's close() takes care of the threading
+        # for us (even when called asynchronously).
         conn.close(wait=(not asynchronous))
 
     def _run_wthread(self, cb, check_state=None):
@@ -624,7 +633,7 @@ class ReconnectingWebSocket(object):
         re-raising the exception if told to.
         Other implementations could make more fine-grained decisions based on,
         e.g., the type of the exception and the source. See also the
-        module-level run_cb() convenience function.
+        module-level run_cb() convenience function for invoking the callback.
         """
         run_cb(self.on_error, exc, source, swallow)
         if not swallow: raise
@@ -635,23 +644,27 @@ class ReconnectingWebSocket(object):
 
         Send a WebSocket frame containing the given data. The type of frame is
         chosen automatically depending on whether data is a byte or Unicode
-        string. The send is asynchronous; this returns a Future that resolves
-        when it finishes. before_cb is invoked (if not None and with no
+        string. The send might be asynchronous; this returns a Future that
+        resolves when it finishes (which may be immediately if the send was
+        not asynchronous). before_cb is invoked (if not None and with no
         arguments) immediately before sending the message, after_cb (if not
         None, and with a single Boolean argument that tells whether sending
         the message was successful, i.e. whether there was *no* exception)
         immediately after.
 
-        In order to send messages, the instance must be in the CONNECTED
-        state; if it is not, an exception is raised. All sends and callbacks
-        (on the same ReconnectingWebSocket) are serialized w.r.t. each other
-        (in particular, a message's after_cb is invoked before the next one's
-        before_cb).
+        In order to send messages, this instance must be in the CONNECTED
+        state; if it is not, a ConnectionClosedError is raised. If a writer
+        thread is used, all sends and callbacks (on the same
+        ReconnectingWebSocket) are serialized w.r.t. each other (in
+        particular, a message's after_cb is invoked before the next one's
+        before_cb); otherwise, the send blocks the calling thread and the
+        actual sending might be delayed (after before_cb has already been
+        called).
         """
         ret = self._run_wthread(lambda: self._do_send(self.conn, data,
             before_cb, after_cb), SST_CONNECTED)
         if ret is None:
-            raise ValueError('Cannot send to non-connected '
+            raise ConnectionClosedError('Cannot send to non-connected '
                 'ReconnectingWebSocket')
         return ret
 
@@ -863,6 +876,9 @@ class WebSocketSession(object):
             been established (in particular after a disconnect). The return
             value indicates whether the command is to be (re-)sent.
 
+            Implementations may mutate the internal data in order to upate
+            them for the new connection.
+
             Executed on the scheduler thread. The default implementation
             always returns True (relying on on_disconnect() to filter out
             not-safe-to-resend commands).
@@ -891,14 +907,15 @@ class WebSocketSession(object):
         Event(data, connid, id=None) -> new instance
 
         A message received from the underlying connection of a
-        WebSocketSession. data is the payload of the event; id is an
-        identifier for matching events to related commands.
+        WebSocketSession. data is the payload of the event; connid is the
+        ID of the connection the event arrived from; id is an identifier for
+        matching events to related commands.
 
         Instance attributes (all initialized from the corresponding
         constructor parameters) are:
         data  : The payload of the event as an arbitrary application-specific
                 object. See also the deserialize() method.
-        connid: The ID of the connection the event received from.
+        connid: The ID of the connection the event was received from.
         id    : An identifier relating this event to some command. None is
                 special-cased to mean that this event cannot be identified.
                 See also the Command class for more details on reply matching.
@@ -934,8 +951,10 @@ class WebSocketSession(object):
 
         Create a new WebSocketSession along with a new enclosed
         ReconnectingWebSocket. url and protos are forwarded to the
-        ReconnectingWebSocket constructor; other keyword arguments are
-        forwarded to the WebSocketSession constructor.
+        ReconnectingWebSocket constructor; conn_cls (defaulting to
+        ReconnectingWebSocket) defines the class to instantiate as the
+        underlying connection; other keyword arguments are forwarded to the
+        WebSocketSession constructor.
         """
         conn_cls = kwds.pop('conn_cls', None)
         if conn_cls is None: conn_cls = ReconnectingWebSocket
@@ -987,9 +1006,9 @@ class WebSocketSession(object):
         Executed on the scheduler thread.
         """
         with self:
-            runlist = tuple(self.commands.values())
+            checklist = tuple(self.commands.values())
         sendlist = []
-        for cmd in runlist:
+        for cmd in checklist:
             if not cmd.on_connect():
                 self._cancel_command(cmd)
                 continue
@@ -1130,13 +1149,23 @@ class WebSocketSession(object):
         _do_submit() -> None
 
         Internal method: Backend of submit().
+
+        This tries to send the first message in the send queue; the message is
+        not removed from the queue until sending finishes.
         """
         with self:
             if not self.queue or self._send_queued: return
             conn = self.conn
             cmd = self.queue[0]
             self._send_queued = True
-        conn.send_message(cmd.serialize(),
+        try:
+            data = cmd.serialize()
+        except Exception as exc:
+            self._on_error(exc, ERRS_SERIALIZE)
+            with self:
+                self._send_queued = False
+            raise
+        conn.send_message(data,
                           lambda: self._on_command_sending(cmd),
                           lambda ok: self._on_command_sent(cmd, ok))
 
