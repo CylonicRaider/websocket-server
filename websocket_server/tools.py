@@ -701,18 +701,28 @@ class Future(object):
     operations on (defaulting to a new lock of an appropriate type).
 
     Read-only instance attributes are:
-    cb      : The callback producing this Future's value (if any).
-    value   : The object enclosed by this Future, or None is not computed yet.
-    state   : The computation state of this Future (one of the ST_PENDING ->
-              ST_COMPUTING -> ST_DONE constants). Note that the value might
-              change immediately after being accessed.
-    done_cbs: A list of callbacks to be run whenever this Future resolves.
-              Each is given the value resolved to as the only positional
-              argument. See also add_done_cb().
+    cb       : The callback producing this Future's value (if any).
+    value    : The object enclosed by this Future, or None if it has not been
+               computed (yet).
+    error    : The exception object this Future failed with, or None if that
+               has not happened (yet).
+    state    : The computation state of this Future (one of the ST_PENDING ->
+               ST_COMPUTING -> ST_DONE or ST_FAILED constants). Note that the
+               value might change immediately after being accessed.
+    error_cbs: A list of callbacks to be run when the callback of this Future
+               (if any) raises an exception. If so, the Future's state is set
+               to ST_FAILED (waking any concurrent wait() calls), the error
+               callbacks are run, and the Future resolves (regularly) to a
+               value of None (invoking all done callbacks). See also
+               add_error_cb().
+    done_cbs : A list of callbacks to be run whenever this Future resolves.
+               Each is given the value resolved to as the only positional
+               argument. See also add_done_cb().
     """
 
     ST_PENDING   = 'PENDING'
     ST_COMPUTING = 'COMPUTING'
+    ST_FAILED    = 'FAILED'
     ST_DONE      = 'DONE'
 
     class Timeout(Exception):
@@ -740,7 +750,9 @@ class Future(object):
         """
         self.cb = cb
         self.value = None
+        self.error = None
         self.state = self.ST_PENDING
+        self.error_cbs = []
         self.done_cbs = []
         self._cond = threading.Condition(lock)
 
@@ -754,15 +766,26 @@ class Future(object):
         callback to run.
         """
         with self._cond:
-            if self.state == self.ST_DONE:
+            if self.state in (self.ST_DONE, self.ST_FAILED):
                 return True
             elif self.state == self.ST_COMPUTING:
                 return Ellipsis
             elif self.cb is None:
                 return False
             self.state = self.ST_COMPUTING
-        v = self.cb()
-        if not self._set(v, self.ST_COMPUTING):
+        try:
+            v = self.cb()
+            check, assign = self.ST_COMPUTING, self.ST_DONE
+        except Exception as exc:
+            v = None
+            with self._cond:
+                self.error = exc
+                self.state = self.ST_FAILED
+                callbacks = tuple(self.error_cbs)
+                self.error_cbs = None
+            for cb in callbacks: cb(exc)
+            check, assign = self.ST_FAILED, self.ST_FAILED
+        if not self._set(v, check, assign):
             raise AssertionError('Future has gotten into an invalid state')
         return True
 
@@ -771,26 +794,27 @@ class Future(object):
         get(default=None) -> object
 
         Retrieve the object wrapped by this Future, or default if the object
-        is not available yet.
+        is not available yet or resolving the Future has failed.
         """
         with self._cond:
             return self.value if self.state == self.ST_DONE else default
 
-    def _set(self, value, check_state):
+    def _set(self, value, check_state, set_state):
         """
-        _set(value, check_state) -> bool
+        _set(value, check_state, set_state) -> bool
 
         Internal: Test whether the state matches check_state; if it does, set
-        the state to DONE, the instance's value to the given value, and run
-        on-done callbacks. Returns whether the assignment succeeded (i.e. the
-        state matched).
+        the state to set_state, the instance's value to the given value, and
+        run on-done callbacks. Returns whether the assignment succeeded (i.e.
+        the state matched).
         """
         with self._cond:
             if self.state != check_state: return False
             self.value = value
-            self.state = self.ST_DONE
+            self.state = set_state
             callbacks = tuple(self.done_cbs)
             self.done_cbs = None
+            self.error_cbs = None
             self._cond.notifyAll()
         for cb in callbacks: cb(value)
         return True
@@ -808,7 +832,7 @@ class Future(object):
         value to be computed; this allows using Future as a one-shot
         equivalent of the threading.Event class.
         """
-        return self._set(value, self.ST_PENDING)
+        return self._set(value, self.ST_PENDING, self.ST_DONE)
 
     def wait(self, timeout=None, run=False):
         """
@@ -824,15 +848,15 @@ class Future(object):
         cannot guarantee that the computation will honor the timeout.
         """
         with self._cond:
-            if self.state == self.ST_DONE:
+            if self.state in (self.ST_DONE, self.ST_FAILED):
                 return self.value
             elif not run or self.cb is None:
                 if timeout is None:
-                    while self.state != self.ST_DONE:
+                    while self.state not in (self.ST_DONE, self.ST_FAILED):
                         self._cond.wait()
                     return self.value
                 deadline = time.time() + timeout
-                while self.state != self.ST_DONE:
+                while self.state not in (self.ST_DONE, self.ST_FAILED):
                     now = time.time()
                     if now >= deadline:
                         raise self.Timeout('Future value did not arrive in '
@@ -843,9 +867,30 @@ class Future(object):
             raise ValueError('Cannot honor timeout while computing value')
         self.run()
         with self._cond:
-            while self.state != self.ST_DONE:
+            while self.state not in (self.ST_DONE, self.ST_FAILED):
                 self._cond.wait()
             return self.value
+
+    def add_error_cb(self, cb):
+        """
+        add_error_cb(cb) -> bool or Ellipsis
+
+        Schedule cb to be invoked if an error happens while computing this
+        Future's value. The callback is not invoked if the Future resolves
+        without error. cb is passed the exception that the Future failed with.
+        This method returns whether the callback has *not* been invoked; a
+        return value of Ellipsis indicates that the callback has been
+        discarded because the Future already resolved successfully.
+        """
+        with self._cond:
+            if self.state == self.ST_DONE:
+                return Ellipsis
+            elif self.state != self.ST_FAILED:
+                self.error_cbs.append(cb)
+                return True
+            e = self.error
+        cb(e)
+        return False
 
     def add_done_cb(self, cb):
         """
@@ -854,15 +899,16 @@ class Future(object):
         Schedule cb to be invoked whenever this Future resolves (or
         immediately if it already did). cb is passed the value the Future
         resolved to as the only argument; its return value is ignored. This
-        method returns whether the callback was invoked immediately.
+        method returns whether the callback has *not* been invoked but stored
+        for later use (for symmetry with add_error_cb()).
         """
         with self._cond:
-            if self.state != self.ST_DONE:
+            if self.state not in (self.ST_DONE, self.ST_FAILED):
                 self.done_cbs.append(cb)
-                return False
+                return True
             v = self.value
         cb(v)
-        return True
+        return False
 
 class EOFQueue(object):
     """
