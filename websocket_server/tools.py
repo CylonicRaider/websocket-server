@@ -834,9 +834,9 @@ class Future(object):
         """
         return self._set(value, self.ST_PENDING, self.ST_DONE)
 
-    def wait(self, timeout=None, run=False):
+    def wait(self, timeout=None, run=False, default=None):
         """
-        wait(timeout=None, run=False) -> object
+        wait(timeout=None, run=False, default=None) -> object
 
         Wait for the object of this Future to be computed and return it. If
         timeout is not None, it imposes a maximum time to wait for the value
@@ -844,17 +844,22 @@ class Future(object):
         when the timeout expires, a Timeout exception is raised. If run is
         true, this computes the value (in this thread) unless that is already
         happening elsewhere; if there is no stored callback, run is ignored.
+        default specifies the value to return if the callback resolving the
+        Future failed with an exception.
+
         It is an error to specify a non-None timeout and run=True; this class
         cannot guarantee that the computation will honor the timeout.
         """
+        def get_value():
+            return self.value if self.state == self.ST_DONE else default
         with self._cond:
             if self.state in (self.ST_DONE, self.ST_FAILED):
-                return self.value
+                return get_value()
             elif not run or self.cb is None:
                 if timeout is None:
                     while self.state not in (self.ST_DONE, self.ST_FAILED):
                         self._cond.wait()
-                    return self.value
+                    return get_value()
                 deadline = time.time() + timeout
                 while self.state not in (self.ST_DONE, self.ST_FAILED):
                     now = time.time()
@@ -862,14 +867,14 @@ class Future(object):
                         raise self.Timeout('Future value did not arrive in '
                                            'time')
                     self._cond.wait(deadline - now)
-                return self.value
+                return get_value()
         if timeout is not None:
             raise ValueError('Cannot honor timeout while computing value')
         self.run()
         with self._cond:
             while self.state not in (self.ST_DONE, self.ST_FAILED):
                 self._cond.wait()
-            return self.value
+            return get_value()
 
     def add_error_cb(self, cb):
         """
