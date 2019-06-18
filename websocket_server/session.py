@@ -1010,7 +1010,7 @@ class WebSocketSession(object):
         sendlist = []
         for cmd in checklist:
             if not cmd.on_connect():
-                self._cancel_command(cmd)
+                self._cancel_command(cmd, True)
                 continue
             sendlist.append(cmd)
         with self:
@@ -1037,7 +1037,7 @@ class WebSocketSession(object):
             self._send_queued = False
         for cmd, safe in runlist:
             if not cmd.on_disconnect(transient, ok, safe):
-                self._cancel_command(cmd)
+                self._cancel_command(cmd, True)
 
     def _on_raw_message(self, msg, connid):
         """
@@ -1090,25 +1090,28 @@ class WebSocketSession(object):
         """
         if not swallow: raise
 
-    def _cancel_command(self, cmd):
+    def _cancel_command(self, cmd, on_scheduler=False):
         """
-        _cancel_command(cmd) -> None
+        _cancel_command(cmd, on_scheduler=False) -> None
 
-        Cancel the given command.
+        Cancel the given command. on_scheduler tells whether the invocation
+        happens on the scheduler thread; this influences whether the command's
+        callback is invoked synchronously or not.
 
         This transitions the command into the CANCELLED state, removes
         references to it from internal indexes, and calls the command's
         on_cancelled() handler.
-
-        Executed on the scheduler thread.
         """
         with self:
             cmd.state = CST_CANCELLED
             self.commands.pop(cmd.id, None)
-            # Not removing from self.queue because commands in there have no
-            # reason to be cancelled -- they have either never touched the
-            # network or have been removed by the reconnect handler anyway.
-        cmd.on_cancelled()
+            # FIXME: Also search the rest of the queue?
+            if self.queue and self.queue[0] is cmd:
+                self.queue.popleft()
+        if on_scheduler:
+            cmd.on_cancelled()
+        else:
+            self.scheduler.add_now(cmd.on_cancelled)
 
     def _on_command_sending(self, cmd):
         """
@@ -1161,13 +1164,17 @@ class WebSocketSession(object):
         try:
             data = cmd.serialize()
         except Exception as exc:
-            self._on_error(exc, ERRS_SERIALIZE)
+            self._on_error(exc, ERRS_SERIALIZE, True)
+            self._cancel_command(cmd)
             with self:
                 self._send_queued = False
-            raise
-        conn.send_message(data,
-                          lambda: self._on_command_sending(cmd),
-                          lambda ok: self._on_command_sent(cmd, ok))
+            # We expect serialization failures to be rare and call ourselves
+            # recursively.
+            self._do_submit()
+        else:
+            conn.send_message(data,
+                              lambda: self._on_command_sending(cmd),
+                              lambda ok: self._on_command_sent(cmd, ok))
 
     def submit(self, cmd):
         """
