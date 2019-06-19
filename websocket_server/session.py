@@ -26,7 +26,7 @@ __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'CST_NEW', 'CST_SENDING', 'CST_SENT', 'CST_SEND_FAILED',
            'CST_CONFIRMED', 'CST_CANCELLED',
            'ERRS_RTHREAD', 'ERRS_WS_CONNECT', 'ERRS_WS_RECV', 'ERRS_WS_SEND',
-           'ERRS_SCHEDULER', 'ERRS_SERIALIZE',
+           'ERRS_SCHEDULER', 'ERRS_SERIALIZE', 'ERRS_CALLBACK',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
            'ReconnectingWebSocket', 'WebSocketSession']
 
@@ -50,6 +50,7 @@ ERRS_WS_RECV    = 'ws_recv'
 ERRS_WS_SEND    = 'ws_send'
 ERRS_SCHEDULER  = 'scheduler'
 ERRS_SERIALIZE  = 'serialize'
+ERRS_CALLBACK   = 'callback'
 
 SWALLOW_CLASSES_CONNECT = (IOError, ProtocolError)
 SWALLOW_CLASSES_RECV    = (IOError,)
@@ -997,6 +998,29 @@ class WebSocketSession(object):
         conn.on_error = self._on_error
         sched.on_error = lambda exc: self._on_error(exc, ERRS_SCHEDULER, True)
 
+    def _run_cb(self, func, *args):
+        """
+        _run_cb(func, *args) -> any or None
+
+        Invoke the given function (in particular a Command callback method)
+        with the given arguments and pass on its return value, or return None
+        if it raises an error (having called the _on_error() instance method
+        in that case).
+        """
+        try:
+            return func(*args)
+        except Exception as exc:
+            self._on_error(exc, ERRS_CALLBACK, True)
+
+    def _run_cb_async(self, func, *args):
+        """
+        _run_cb_async(func, *args) -> None
+
+        Schedule the given function to be called with the given arguments via
+        _run_cb(); see there for more details.
+        """
+        self.scheduler.add_now(lambda: self._run_cb(func, *args))
+
     def _on_connected(self, connid, transient):
         """
         _on_connected(connid, transient) -> None
@@ -1009,7 +1033,7 @@ class WebSocketSession(object):
             checklist = tuple(self.commands.values())
         sendlist = []
         for cmd in checklist:
-            if not cmd.on_connect():
+            if not self._run_cb(cmd.on_connect):
                 self._cancel_command(cmd, True)
                 continue
             sendlist.append(cmd)
@@ -1036,7 +1060,7 @@ class WebSocketSession(object):
                        for cmd in self.commands.values()]
             self._send_queued = False
         for cmd, safe in runlist:
-            if not cmd.on_disconnect(transient, ok, safe):
+            if not self._run_cb(cmd.on_disconnect, transient, ok, safe):
                 self._cancel_command(cmd, True)
 
     def _on_raw_message(self, msg, connid):
@@ -1060,9 +1084,9 @@ class WebSocketSession(object):
                                                  CST_SENT, CST_SEND_FAILED):
                 cmd.state = CST_CONFIRMED
         if cmd is not None:
-            cmd.on_response(evt)
+            self._run_cb(cmd.on_response, evt)
         else:
-            self._on_event(evt)
+            self._run_cb(self._on_event, evt)
         with self:
             if cmd is not None and cmd.responses is not None:
                 cmd.responses -= 1
@@ -1109,9 +1133,9 @@ class WebSocketSession(object):
             if self.queue and self.queue[0] is cmd:
                 self.queue.popleft()
         if on_scheduler:
-            cmd.on_cancelled()
+            self._run_cb(cmd.on_cancelled)
         else:
-            self.scheduler.add_now(cmd.on_cancelled)
+            self._run_cb_async(cmd.on_cancelled)
 
     def _on_command_sending(self, cmd):
         """
@@ -1126,7 +1150,7 @@ class WebSocketSession(object):
         with self:
             if cmd.state in (CST_NEW, CST_CONFIRMED, CST_SEND_FAILED):
                 cmd.state = CST_SENDING
-            self.scheduler.add_now(cmd.on_sending)
+            self._run_cb_async(cmd.on_sending)
 
     def _on_command_sent(self, cmd, ok):
         """
@@ -1142,7 +1166,7 @@ class WebSocketSession(object):
         with self:
             if cmd.state in (CST_NEW, CST_SENDING):
                 cmd.state = CST_SENT if ok else CST_SEND_FAILED
-            self.scheduler.add_now(lambda: cmd.on_sent(ok))
+            self._run_cb_async(cmd.on_sent, ok)
             self.queue.popleft()
             self._send_queued = False
         self._do_submit()
