@@ -756,45 +756,6 @@ class Future(object):
         self.done_cbs = []
         self._cond = threading.Condition(lock)
 
-    def run(self):
-        """
-        run() -> bool or Ellipsis
-
-        Compute the value wrapped by this Future if possible. Returns True
-        when the computation has finished, or the (truthy) Ellipsis if the
-        computation is going on concurrently, or False if there is no stored
-        callback to run.
-        """
-        with self._cond:
-            if self.state in (self.ST_DONE, self.ST_FAILED):
-                return True
-            elif self.state == self.ST_COMPUTING:
-                return Ellipsis
-            elif self.cb is None:
-                return False
-            self.state = self.ST_COMPUTING
-        try:
-            v = self.cb()
-        except Exception as exc:
-            if not self._fail(exc, self.ST_COMPUTING):
-                raise AssertionError('Future has gotten into an invalid '
-                    'state')
-        else:
-            if not self._set(v, self.ST_COMPUTING, self.ST_DONE):
-                raise AssertionError('Future has gotten into an invalid '
-                    'state')
-        return True
-
-    def get(self, default=None):
-        """
-        get(default=None) -> object
-
-        Retrieve the object wrapped by this Future, or default if the object
-        is not available yet or resolving the Future has failed.
-        """
-        with self._cond:
-            return self.value if self.state == self.ST_DONE else default
-
     def _set(self, value, check_state, set_state):
         """
         _set(value, check_state, set_state) -> bool
@@ -851,17 +812,57 @@ class Future(object):
         """
         return self._set(value, self.ST_PENDING, self.ST_DONE)
 
+    def run(self):
+        """
+        run() -> bool or Ellipsis
+
+        Compute the value wrapped by this Future if possible. Returns True
+        when the computation has finished, or the (truthy) Ellipsis if the
+        computation is going on concurrently, or False if there is no stored
+        callback to run.
+        """
+        with self._cond:
+            if self.state in (self.ST_DONE, self.ST_FAILED):
+                return True
+            elif self.state == self.ST_COMPUTING:
+                return Ellipsis
+            elif self.cb is None:
+                return False
+            self.state = self.ST_COMPUTING
+        try:
+            v = self.cb()
+        except Exception as exc:
+            if not self._fail(exc, self.ST_COMPUTING):
+                raise AssertionError('Future has gotten into an invalid '
+                    'state')
+        else:
+            if not self._set(v, self.ST_COMPUTING, self.ST_DONE):
+                raise AssertionError('Future has gotten into an invalid '
+                    'state')
+        return True
+
     def cancel(self):
         """
         cancel() -> bool
 
         Cancel this Future's computation if it has not started yet. Returns
-        whether cancelling succeeded.
+        whether cancelling succeeded (i.e. whether the value has neither
+        started being computed nor has been explicitly set).
 
         This is treated as if computing the value failed with an exception but
         that exception turned out to be None.
         """
         return self._fail(None, self.ST_PENDING)
+
+    def get(self, default=None):
+        """
+        get(default=None) -> object
+
+        Retrieve the object wrapped by this Future, or default if the object
+        is not available yet or resolving the Future has failed.
+        """
+        with self._cond:
+            return self.value if self.state == self.ST_DONE else default
 
     def wait(self, timeout=None, run=False, default=None):
         """
