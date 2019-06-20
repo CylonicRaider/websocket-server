@@ -775,18 +775,14 @@ class Future(object):
             self.state = self.ST_COMPUTING
         try:
             v = self.cb()
-            check, assign = self.ST_COMPUTING, self.ST_DONE
         except Exception as exc:
-            v = None
-            with self._cond:
-                self.error = exc
-                self.state = self.ST_FAILED
-                callbacks = tuple(self.error_cbs)
-                self.error_cbs = None
-            for cb in callbacks: cb(exc)
-            check, assign = self.ST_FAILED, self.ST_FAILED
-        if not self._set(v, check, assign):
-            raise AssertionError('Future has gotten into an invalid state')
+            if not self._fail(exc, self.ST_COMPUTING):
+                raise AssertionError('Future has gotten into an invalid '
+                    'state')
+        else:
+            if not self._set(v, self.ST_COMPUTING, self.ST_DONE):
+                raise AssertionError('Future has gotten into an invalid '
+                    'state')
         return True
 
     def get(self, default=None):
@@ -819,6 +815,27 @@ class Future(object):
         for cb in callbacks: cb(value)
         return True
 
+    def _fail(self, exc, check_state):
+        """
+        _fail(exc, check_state) -> bool
+
+        Internal: Test whether the state matches check_state; if it does, set
+        the state to ST_FAILED, the instance's stored error to the given
+        value, invoke on-error callbacks, and resolve this instance to a
+        value of None. Returns whether the operation succeeded (i.e. if the
+        state matched).
+        """
+        with self._cond:
+            if self.state != check_state: return False
+            self.error = exc
+            self.state = self.ST_FAILED
+            callbacks = tuple(self.error_cbs)
+            self.error_cbs = None
+            self._cond.notifyAll()
+        for cb in callbacks: cb(exc)
+        self._set(None, self.ST_FAILED, self.ST_FAILED)
+        return True
+
     def set(self, value=None):
         """
         set(value=None) -> bool
@@ -833,6 +850,18 @@ class Future(object):
         equivalent of the threading.Event class.
         """
         return self._set(value, self.ST_PENDING, self.ST_DONE)
+
+    def cancel(self):
+        """
+        cancel() -> bool
+
+        Cancel this Future's computation if it has not started yet. Returns
+        whether cancelling succeeded.
+
+        This is treated as if computing the value failed with an exception but
+        that exception turned out to be None.
+        """
+        return self._fail(None, self.ST_PENDING)
 
     def wait(self, timeout=None, run=False, default=None):
         """
