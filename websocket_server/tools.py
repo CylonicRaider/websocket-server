@@ -388,6 +388,262 @@ class AtomicSequence(object):
             self.counter += 1
             return ret
 
+class Future(object):
+    """
+    Future(cb=None, lock=None) -> new instance
+
+    A wrapper around an object that may have yet to be computed. The
+    computation of the object is either represented by the callable cb, which
+    is called with no arguments and returns the computed object; or happens
+    outside this Future with the result assigned via the set() method (if cb
+    is None). lock, if not None, specifies the lock to synchronize internal
+    operations on (defaulting to a new lock of an appropriate type).
+
+    Read-only instance attributes are:
+    cb       : The callback producing this Future's value (if any).
+    value    : The object enclosed by this Future, or None if it has not been
+               computed (yet).
+    error    : The exception object this Future failed with, or None if that
+               has not happened (yet).
+    state    : The computation state of this Future (one of the ST_PENDING ->
+               ST_COMPUTING -> ST_DONE or ST_FAILED constants). Note that the
+               value might change immediately after being accessed.
+    error_cbs: A list of callbacks to be run when the callback of this Future
+               (if any) raises an exception. If so, the Future's state is set
+               to ST_FAILED (waking any concurrent wait() calls), the error
+               callbacks are run, and the Future resolves (regularly) to a
+               value of None (invoking all done callbacks). See also
+               add_error_cb().
+    done_cbs : A list of callbacks to be run whenever this Future resolves.
+               Each is given the value resolved to as the only positional
+               argument. See also add_done_cb().
+    """
+
+    ST_PENDING   = 'PENDING'
+    ST_COMPUTING = 'COMPUTING'
+    ST_FAILED    = 'FAILED'
+    ST_DONE      = 'DONE'
+
+    class Timeout(Exception):
+        """
+        An exception indicating that a timed wait for a Future did not
+        succeed.
+        """
+
+    @classmethod
+    def resolved(cls, value=None):
+        """
+        resolved(value=None) -> new instance
+
+        Return a Future that is already resolved to the given value.
+        """
+        ret = cls()
+        ret.set(value)
+        return ret
+
+    def __init__(self, cb=None, lock=None):
+        """
+        __init__(cb=None, lock=None) -> None
+
+        Instance initializer; see the class docstring for details.
+        """
+        self.cb = cb
+        self.value = None
+        self.error = None
+        self.state = self.ST_PENDING
+        self.error_cbs = []
+        self.done_cbs = []
+        self._cond = threading.Condition(lock)
+
+    def _set(self, value, check_state, set_state):
+        """
+        _set(value, check_state, set_state) -> bool
+
+        Internal: Test whether the state matches check_state; if it does, set
+        the state to set_state, the instance's value to the given value, and
+        run on-done callbacks. Returns whether the assignment succeeded (i.e.
+        the state matched).
+        """
+        with self._cond:
+            if self.state != check_state: return False
+            self.value = value
+            self.state = set_state
+            callbacks = tuple(self.done_cbs)
+            self.done_cbs = None
+            self.error_cbs = None
+            self._cond.notifyAll()
+        for cb in callbacks: cb(value)
+        return True
+
+    def _fail(self, exc, check_state):
+        """
+        _fail(exc, check_state) -> bool
+
+        Internal: Test whether the state matches check_state; if it does, set
+        the state to ST_FAILED, the instance's stored error to the given
+        value, invoke on-error callbacks, and resolve this instance to a
+        value of None. Returns whether the operation succeeded (i.e. if the
+        state matched).
+        """
+        with self._cond:
+            if self.state != check_state: return False
+            self.error = exc
+            self.state = self.ST_FAILED
+            callbacks = tuple(self.error_cbs)
+            self.error_cbs = None
+            self._cond.notifyAll()
+        for cb in callbacks: cb(exc)
+        self._set(None, self.ST_FAILED, self.ST_FAILED)
+        return True
+
+    def set(self, value=None):
+        """
+        set(value=None) -> bool
+
+        Explicitly store an object in this Future. value is the value to
+        store. Returns whether setting the Future's value succeeded (i.e.
+        whether the value was not already there and there was no computation
+        of the it running concurrently).
+
+        If value is omitted, this still wakes up all threads waiting for some
+        value to be computed; this allows using Future as a one-shot
+        equivalent of the threading.Event class.
+        """
+        return self._set(value, self.ST_PENDING, self.ST_DONE)
+
+    def run(self):
+        """
+        run() -> bool or Ellipsis
+
+        Compute the value wrapped by this Future if possible. Returns True
+        when the computation has finished, or the (truthy) Ellipsis if the
+        computation is going on concurrently, or False if there is no stored
+        callback to run.
+        """
+        with self._cond:
+            if self.state in (self.ST_DONE, self.ST_FAILED):
+                return True
+            elif self.state == self.ST_COMPUTING:
+                return Ellipsis
+            elif self.cb is None:
+                return False
+            self.state = self.ST_COMPUTING
+        try:
+            v = self.cb()
+        except Exception as exc:
+            if not self._fail(exc, self.ST_COMPUTING):
+                raise AssertionError('Future has gotten into an invalid '
+                    'state')
+        else:
+            if not self._set(v, self.ST_COMPUTING, self.ST_DONE):
+                raise AssertionError('Future has gotten into an invalid '
+                    'state')
+        return True
+
+    def cancel(self):
+        """
+        cancel() -> bool
+
+        Cancel this Future's computation if it has not started yet. Returns
+        whether cancelling succeeded (i.e. whether the value has neither
+        started being computed nor has been explicitly set).
+
+        This is treated as if computing the value failed with an exception but
+        that exception turned out to be None.
+        """
+        return self._fail(None, self.ST_PENDING)
+
+    def get(self, default=None):
+        """
+        get(default=None) -> object
+
+        Retrieve the object wrapped by this Future, or default if the object
+        is not available yet or resolving the Future has failed.
+        """
+        with self._cond:
+            return self.value if self.state == self.ST_DONE else default
+
+    def wait(self, timeout=None, run=False, default=None):
+        """
+        wait(timeout=None, run=False, default=None) -> object
+
+        Wait for the object of this Future to be computed and return it. If
+        timeout is not None, it imposes a maximum time to wait for the value
+        (in potentially fractional seconds); if the value is not available
+        when the timeout expires, a Timeout exception is raised. If run is
+        true, this computes the value (in this thread) unless that is already
+        happening elsewhere; if there is no stored callback, run is ignored.
+        default specifies the value to return if the callback resolving the
+        Future failed with an exception.
+
+        It is an error to specify a non-None timeout and run=True; this class
+        cannot guarantee that the computation will honor the timeout.
+        """
+        def get_value():
+            return self.value if self.state == self.ST_DONE else default
+        with self._cond:
+            if self.state in (self.ST_DONE, self.ST_FAILED):
+                return get_value()
+            elif not run or self.cb is None:
+                if timeout is None:
+                    while self.state not in (self.ST_DONE, self.ST_FAILED):
+                        self._cond.wait()
+                    return get_value()
+                deadline = time.time() + timeout
+                while self.state not in (self.ST_DONE, self.ST_FAILED):
+                    now = time.time()
+                    if now >= deadline:
+                        raise self.Timeout('Future value did not arrive in '
+                                           'time')
+                    self._cond.wait(deadline - now)
+                return get_value()
+        if timeout is not None:
+            raise ValueError('Cannot honor timeout while computing value')
+        self.run()
+        with self._cond:
+            while self.state not in (self.ST_DONE, self.ST_FAILED):
+                self._cond.wait()
+            return get_value()
+
+    def add_error_cb(self, cb):
+        """
+        add_error_cb(cb) -> bool or Ellipsis
+
+        Schedule cb to be invoked if an error happens while computing this
+        Future's value. The callback is not invoked if the Future resolves
+        without error. cb is passed the exception that the Future failed with.
+        This method returns whether the callback has *not* been invoked; a
+        return value of Ellipsis indicates that the callback has been
+        discarded because the Future already resolved successfully.
+        """
+        with self._cond:
+            if self.state == self.ST_DONE:
+                return Ellipsis
+            elif self.state != self.ST_FAILED:
+                self.error_cbs.append(cb)
+                return True
+            e = self.error
+        cb(e)
+        return False
+
+    def add_done_cb(self, cb):
+        """
+        add_done_cb(cb) -> bool
+
+        Schedule cb to be invoked whenever this Future resolves (or
+        immediately if it already did). cb is passed the value the Future
+        resolved to as the only argument; its return value is ignored. This
+        method returns whether the callback has *not* been invoked but stored
+        for later use (for symmetry with add_error_cb()).
+        """
+        with self._cond:
+            if self.state not in (self.ST_DONE, self.ST_FAILED):
+                self.done_cbs.append(cb)
+                return True
+            v = self.value
+        cb(v)
+        return False
+
 class Scheduler(object):
     """
     Scheduler() -> new instance
@@ -688,262 +944,6 @@ class Scheduler(object):
         with self.cond:
             while self._references > 0:
                 self.wait(None)
-
-class Future(object):
-    """
-    Future(cb=None, lock=None) -> new instance
-
-    A wrapper around an object that may have yet to be computed. The
-    computation of the object is either represented by the callable cb, which
-    is called with no arguments and returns the computed object; or happens
-    outside this Future with the result assigned via the set() method (if cb
-    is None). lock, if not None, specifies the lock to synchronize internal
-    operations on (defaulting to a new lock of an appropriate type).
-
-    Read-only instance attributes are:
-    cb       : The callback producing this Future's value (if any).
-    value    : The object enclosed by this Future, or None if it has not been
-               computed (yet).
-    error    : The exception object this Future failed with, or None if that
-               has not happened (yet).
-    state    : The computation state of this Future (one of the ST_PENDING ->
-               ST_COMPUTING -> ST_DONE or ST_FAILED constants). Note that the
-               value might change immediately after being accessed.
-    error_cbs: A list of callbacks to be run when the callback of this Future
-               (if any) raises an exception. If so, the Future's state is set
-               to ST_FAILED (waking any concurrent wait() calls), the error
-               callbacks are run, and the Future resolves (regularly) to a
-               value of None (invoking all done callbacks). See also
-               add_error_cb().
-    done_cbs : A list of callbacks to be run whenever this Future resolves.
-               Each is given the value resolved to as the only positional
-               argument. See also add_done_cb().
-    """
-
-    ST_PENDING   = 'PENDING'
-    ST_COMPUTING = 'COMPUTING'
-    ST_FAILED    = 'FAILED'
-    ST_DONE      = 'DONE'
-
-    class Timeout(Exception):
-        """
-        An exception indicating that a timed wait for a Future did not
-        succeed.
-        """
-
-    @classmethod
-    def resolved(cls, value=None):
-        """
-        resolved(value=None) -> new instance
-
-        Return a Future that is already resolved to the given value.
-        """
-        ret = cls()
-        ret.set(value)
-        return ret
-
-    def __init__(self, cb=None, lock=None):
-        """
-        __init__(cb=None, lock=None) -> None
-
-        Instance initializer; see the class docstring for details.
-        """
-        self.cb = cb
-        self.value = None
-        self.error = None
-        self.state = self.ST_PENDING
-        self.error_cbs = []
-        self.done_cbs = []
-        self._cond = threading.Condition(lock)
-
-    def _set(self, value, check_state, set_state):
-        """
-        _set(value, check_state, set_state) -> bool
-
-        Internal: Test whether the state matches check_state; if it does, set
-        the state to set_state, the instance's value to the given value, and
-        run on-done callbacks. Returns whether the assignment succeeded (i.e.
-        the state matched).
-        """
-        with self._cond:
-            if self.state != check_state: return False
-            self.value = value
-            self.state = set_state
-            callbacks = tuple(self.done_cbs)
-            self.done_cbs = None
-            self.error_cbs = None
-            self._cond.notifyAll()
-        for cb in callbacks: cb(value)
-        return True
-
-    def _fail(self, exc, check_state):
-        """
-        _fail(exc, check_state) -> bool
-
-        Internal: Test whether the state matches check_state; if it does, set
-        the state to ST_FAILED, the instance's stored error to the given
-        value, invoke on-error callbacks, and resolve this instance to a
-        value of None. Returns whether the operation succeeded (i.e. if the
-        state matched).
-        """
-        with self._cond:
-            if self.state != check_state: return False
-            self.error = exc
-            self.state = self.ST_FAILED
-            callbacks = tuple(self.error_cbs)
-            self.error_cbs = None
-            self._cond.notifyAll()
-        for cb in callbacks: cb(exc)
-        self._set(None, self.ST_FAILED, self.ST_FAILED)
-        return True
-
-    def set(self, value=None):
-        """
-        set(value=None) -> bool
-
-        Explicitly store an object in this Future. value is the value to
-        store. Returns whether setting the Future's value succeeded (i.e.
-        whether the value was not already there and there was no computation
-        of the it running concurrently).
-
-        If value is omitted, this still wakes up all threads waiting for some
-        value to be computed; this allows using Future as a one-shot
-        equivalent of the threading.Event class.
-        """
-        return self._set(value, self.ST_PENDING, self.ST_DONE)
-
-    def run(self):
-        """
-        run() -> bool or Ellipsis
-
-        Compute the value wrapped by this Future if possible. Returns True
-        when the computation has finished, or the (truthy) Ellipsis if the
-        computation is going on concurrently, or False if there is no stored
-        callback to run.
-        """
-        with self._cond:
-            if self.state in (self.ST_DONE, self.ST_FAILED):
-                return True
-            elif self.state == self.ST_COMPUTING:
-                return Ellipsis
-            elif self.cb is None:
-                return False
-            self.state = self.ST_COMPUTING
-        try:
-            v = self.cb()
-        except Exception as exc:
-            if not self._fail(exc, self.ST_COMPUTING):
-                raise AssertionError('Future has gotten into an invalid '
-                    'state')
-        else:
-            if not self._set(v, self.ST_COMPUTING, self.ST_DONE):
-                raise AssertionError('Future has gotten into an invalid '
-                    'state')
-        return True
-
-    def cancel(self):
-        """
-        cancel() -> bool
-
-        Cancel this Future's computation if it has not started yet. Returns
-        whether cancelling succeeded (i.e. whether the value has neither
-        started being computed nor has been explicitly set).
-
-        This is treated as if computing the value failed with an exception but
-        that exception turned out to be None.
-        """
-        return self._fail(None, self.ST_PENDING)
-
-    def get(self, default=None):
-        """
-        get(default=None) -> object
-
-        Retrieve the object wrapped by this Future, or default if the object
-        is not available yet or resolving the Future has failed.
-        """
-        with self._cond:
-            return self.value if self.state == self.ST_DONE else default
-
-    def wait(self, timeout=None, run=False, default=None):
-        """
-        wait(timeout=None, run=False, default=None) -> object
-
-        Wait for the object of this Future to be computed and return it. If
-        timeout is not None, it imposes a maximum time to wait for the value
-        (in potentially fractional seconds); if the value is not available
-        when the timeout expires, a Timeout exception is raised. If run is
-        true, this computes the value (in this thread) unless that is already
-        happening elsewhere; if there is no stored callback, run is ignored.
-        default specifies the value to return if the callback resolving the
-        Future failed with an exception.
-
-        It is an error to specify a non-None timeout and run=True; this class
-        cannot guarantee that the computation will honor the timeout.
-        """
-        def get_value():
-            return self.value if self.state == self.ST_DONE else default
-        with self._cond:
-            if self.state in (self.ST_DONE, self.ST_FAILED):
-                return get_value()
-            elif not run or self.cb is None:
-                if timeout is None:
-                    while self.state not in (self.ST_DONE, self.ST_FAILED):
-                        self._cond.wait()
-                    return get_value()
-                deadline = time.time() + timeout
-                while self.state not in (self.ST_DONE, self.ST_FAILED):
-                    now = time.time()
-                    if now >= deadline:
-                        raise self.Timeout('Future value did not arrive in '
-                                           'time')
-                    self._cond.wait(deadline - now)
-                return get_value()
-        if timeout is not None:
-            raise ValueError('Cannot honor timeout while computing value')
-        self.run()
-        with self._cond:
-            while self.state not in (self.ST_DONE, self.ST_FAILED):
-                self._cond.wait()
-            return get_value()
-
-    def add_error_cb(self, cb):
-        """
-        add_error_cb(cb) -> bool or Ellipsis
-
-        Schedule cb to be invoked if an error happens while computing this
-        Future's value. The callback is not invoked if the Future resolves
-        without error. cb is passed the exception that the Future failed with.
-        This method returns whether the callback has *not* been invoked; a
-        return value of Ellipsis indicates that the callback has been
-        discarded because the Future already resolved successfully.
-        """
-        with self._cond:
-            if self.state == self.ST_DONE:
-                return Ellipsis
-            elif self.state != self.ST_FAILED:
-                self.error_cbs.append(cb)
-                return True
-            e = self.error
-        cb(e)
-        return False
-
-    def add_done_cb(self, cb):
-        """
-        add_done_cb(cb) -> bool
-
-        Schedule cb to be invoked whenever this Future resolves (or
-        immediately if it already did). cb is passed the value the Future
-        resolved to as the only argument; its return value is ignored. This
-        method returns whether the callback has *not* been invoked but stored
-        for later use (for symmetry with add_error_cb()).
-        """
-        with self._cond:
-            if self.state not in (self.ST_DONE, self.ST_FAILED):
-                self.done_cbs.append(cb)
-                return True
-            v = self.value
-        cb(v)
-        return False
 
 class EOFQueue(object):
     """
