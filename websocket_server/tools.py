@@ -472,7 +472,8 @@ class Future(object):
             self.done_cbs = None
             self.error_cbs = None
             self._cond.notifyAll()
-        for cb in callbacks: cb(value)
+        for cb in callbacks:
+            cb(value)
         return True
 
     def _fail(self, exc, check_state):
@@ -492,8 +493,11 @@ class Future(object):
             callbacks = tuple(self.error_cbs)
             self.error_cbs = None
             self._cond.notifyAll()
-        for cb in callbacks: cb(exc)
-        self._set(None, self.ST_FAILED, self.ST_FAILED)
+        for cb in callbacks:
+            cb(exc)
+        if not self._set(None, self.ST_FAILED, self.ST_FAILED):
+            raise AssertionError('Future experienced an invalid state '
+                'transition')
         return True
 
     def set(self, value=None):
@@ -552,6 +556,17 @@ class Future(object):
         that exception turned out to be None.
         """
         return self._fail(None, self.ST_PENDING)
+
+    def get_state(self):
+        """
+        get_state() -> ST_*
+
+        Retrieve the state of this Future. This has the benefit over reading
+        the state attribute directly of synchronizing on the underlying lock
+        and thus avoiding reporting inconsistent transient states.
+        """
+        with self._cond:
+            return self.state
 
     def get(self, default=None):
         """
@@ -656,7 +671,7 @@ class Scheduler(object):
     preventing it from shutting down while they might submit tasks.
     """
 
-    class Task(object):
+    class Task(Future):
         """
         Task(parent, cb, timestamp, daemon, seq) -> new instance
 
@@ -682,13 +697,13 @@ class Scheduler(object):
 
             Instance initializer; see the class docstring for details.
             """
+            Future.__init__(self, cb)
             self.parent = parent
             self.cb = cb
             self.timestamp = timestamp
             self.daemon = daemon
             self.seq = seq
-            self.cancelled = False
-            self.started = False
+            self._referencing = False
             self._key = (self.timestamp, self.seq)
 
         def __lt__(self, other): return self._key <  other._key
@@ -698,19 +713,22 @@ class Scheduler(object):
         def __ge__(self, other): return self._key >= other._key
         def __gt__(self, other): return self._key >  other._key
 
-        def cancel(self):
-            """
-            cancel() -> bool
+        def _set(self, *args):
+            "Internal method override; see Future for details."
+            ret = Future._set(self, *args)
+            if ret:
+                with self.parent.cond:
+                    if self._referencing:
+                        self._referencing = False
+                        self.parent._references -= 1
+                        self.parent.cond.notifyAll()
+            return ret
 
-            Cancel this task. Returns whether cancelling succeeded.
-            """
-            with self.parent.cond:
-                if not (self.daemon or self.cancelled or self.started):
-                    self.parent._pending -= 1
-                ok = (not self.cancelled and not self.started)
-                self.cancelled = True
-                self.parent.cond.notifyAll()
-            return ok
+        def _fail(self, exc, *args):
+            "Internal method override; see Future for details."
+            ret = Future._fail(self, exc, *args)
+            self.parent._on_error(exc)
+            return ret
 
     class Hold(object):
         """
@@ -821,10 +839,12 @@ class Scheduler(object):
 
         Schedule the given task to be run and return it.
         """
+        if task.get_state() != Future.ST_PENDING: return
         with self.cond:
-            if task.cancelled: return
             heapq.heappush(self.queue, task)
-            if not task.daemon: self._references += 1
+            if not task.daemon:
+                task._referencing = True
+                self._references += 1
             self.cond.notifyAll()
         return task
 
@@ -886,14 +906,10 @@ class Scheduler(object):
         is the Exception instance pertaining to the error; sys.exc_info() may
         be consulted as well.
 
-        The default implementation invoked the on_error instance attribute
-        unless that is None, or immediately re-raises exc if there is no error
-        handler installed.
+        The default implementation invokes the on_error instance attribute
+        unless that is None.
         """
-        if self.on_error is not None:
-            self.on_error(exc)
-        else:
-            raise exc
+        if self.on_error is not None: self.on_error(exc)
 
     def run(self):
         """
@@ -916,15 +932,7 @@ class Scheduler(object):
                 head = heapq.heappop(self.queue)
                 if head.cancelled: continue
                 head.started = True
-            try:
-                head.cb()
-            except Exception as exc:
-                self._on_error(exc)
-            finally:
-                if not head.daemon:
-                    with self.cond:
-                        self._references -= 1
-                        self.cond.notifyAll()
+            head.run()
 
     def start(self, daemon=True):
         """
