@@ -685,10 +685,7 @@ class Scheduler(object):
 
         The constructor parameters are stored as correspondingly-named
         instance attributes; those must not be changed after initialization
-        (or erratic behavior occurs). Additionally, there is a (read-only)
-        "cancelled" attribute that tells whether the task has been cancelled,
-        and a "started" attribute that tells whether the task has already
-        started running.
+        (or erratic behavior occurs).
         """
 
         def __init__(self, parent, cb, timestamp, daemon, seq):
