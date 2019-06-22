@@ -701,7 +701,7 @@ class CookieJar(object):
 
 class FileCookieJar(CookieJar):
     """
-    FileCookieJar(file=None, mode=None) -> new instance
+    FileCookieJar(file=None, mode=None, autosave=False) -> new instance
 
     FileCookieJar is an abstract extension of CookieJar providing
     methods to save cookies to a file and to restore them from it.
@@ -715,18 +715,22 @@ class FileCookieJar(CookieJar):
     after creating it (*not* when an already-existing file is opened).
     The class does not define a particular serialization format; this
     is delegated to subclasses.
+    If autosave is true, all modification methods perform an implicit
+    save() before returning. Be warned that this will not work well if
+    multiple FileCookieJar-s are to operate on the same file.
 
     Instance attributes (aside from interited ones) are:
     file: The file object underlying this instance.
     """
 
-    def __init__(self, file=None, mode=None):
+    def __init__(self, file=None, mode=None, autosave=False):
         """
         __init__(file=None, mode=None) -> None
 
         See class docstring for details.
         """
         CookieJar.__init__(self)
+        self.autosave = autosave
         self._file = file
         self._mode = mode
         if isinstance(file, (str, unicode)):
@@ -736,12 +740,33 @@ class FileCookieJar(CookieJar):
             except IOError:
                 self.file = open(file, 'w+')
                 # HACK: fchmod() is less racy, and less widely available.
-                try:
-                    os.fchmod(self.file.fileno(), mode)
-                except NameError:
-                    os.chmod(file, mode)
+                if mode is not None:
+                    try:
+                        os.fchmod(self.file.fileno(), mode)
+                    except NameError:
+                        os.chmod(file, mode)
         else:
             self.file = file
+
+    def add(self, cookie, validate=False):
+        "Method override; see CookieJar for details."
+        with self:
+            ret = CookieJar.add(self, cookie, validate)
+            if self.autosave: self.save()
+            return ret
+
+    def remove(self, cookie):
+        "Method override; see CookieJar for details."
+        with self:
+            ret = CookieJar.remove(self, cookie)
+            if self.autosave: self.save()
+            return ret
+
+    def filter(self, predicate=None):
+        "Method override; see CookieJar for details."
+        with self:
+            CookieJar.filter(self, predicate)
+            if self.autosave: self.save()
 
     def save(self, cleanup=True):
         """
