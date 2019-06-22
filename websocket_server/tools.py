@@ -886,13 +886,13 @@ class Scheduler(object):
         Wrap func in a callable that runs func inside this scheduler. When the
         returned callable is invoked, it uses add_now() to schedule a task
         which will run func with any arguments provided to the returned
-        callable. The callable's return value is a Task object that allows
-        cancelling the execution again (as long as the caller is aware that
-        it invoked a Scheduler wrapper).
+        callable. The callable's return value is a Task (and thus Future)
+        object that allows waiting for the result of the execution or
+        cancelling it again (as long as the caller is aware of that).
         """
         # Give the function a fancy name.
         def scheduler_wrapper(*_args, **_kwds):
-            self.add_now(lambda: func(*_args, **_kwds))
+            return self.add_now(lambda: func(*_args, **_kwds))
         return scheduler_wrapper
 
     def _on_error(self, exc):
