@@ -980,6 +980,10 @@ class WebSocketSession(object):
         if scheduler is None: scheduler = Scheduler()
         self.conn = conn
         self.scheduler = scheduler
+        self.on_connected = None
+        self.on_disconnecting = None
+        self.on_event = None
+        self.on_error = None
         self.commands = collections.OrderedDict()
         self.queue = collections.deque()
         self._send_queued = False
@@ -1012,11 +1016,12 @@ class WebSocketSession(object):
         """
         _run_cb(func, *args) -> any or None
 
-        Invoke the given function (in particular a Command callback method)
-        with the given arguments and pass on its return value, or return None
-        if it raises an error (having called the _on_error() instance method
-        in that case).
+        Invoke the given function (in particular a Command callback method, or
+        None to accept any arguments and do nothing) with the given arguments
+        and pass on its return value, or return None if it raises an error
+        (having called the _on_error() instance method in that case).
         """
+        if func is None: return
         try:
             return func(*args)
         except Exception as exc:
@@ -1051,6 +1056,7 @@ class WebSocketSession(object):
             already_pending = frozenset(self.queue)
             self.queue.extend(cmd for cmd in sendlist
                               if cmd not in already_pending)
+        self._run_cb(self.on_connected, connid, transient)
         self._do_submit()
 
     def _on_disconnecting(self, connid, transient, ok):
@@ -1072,6 +1078,7 @@ class WebSocketSession(object):
         for cmd, safe in runlist:
             if not self._run_cb(cmd.on_disconnect, transient, ok, safe):
                 self._cancel_command(cmd, True)
+        self._run_cb(self.on_disconnecting, connid, transient, ok)
 
     def _on_raw_message(self, msg, connid):
         """
@@ -1111,9 +1118,9 @@ class WebSocketSession(object):
         known command is received.
 
         Executed on the scheduler thread. The default implementation does
-        nothing.
+        nothing (aside from calling the on_event attribute, if not None).
         """
-        pass
+        self._run_cb(self.on_event, evt)
 
     def _on_error(self, exc, source, swallow=False):
         """
@@ -1122,6 +1129,8 @@ class WebSocketSession(object):
         Event handler method invoked when an error occurs. See
         ReconnectingWebSocket._on_error() for details.
         """
+        # Not using self._run_cb() to avoid infinite recursion.
+        run_cb(self.on_error, exc, source, swallow)
         if not swallow: raise
 
     def _cancel_command(self, cmd, on_scheduler=False):
@@ -1202,8 +1211,8 @@ class WebSocketSession(object):
             self._cancel_command(cmd)
             with self:
                 self._send_queued = False
-            # We expect serialization failures to be rare and call ourselves
-            # recursively.
+            # We expect serialization failures to be rare (*exceptional*
+            # indeed) and call ourselves recursively.
             self._do_submit()
         else:
             conn.send_message(data,
