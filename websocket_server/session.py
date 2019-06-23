@@ -110,11 +110,12 @@ def backoff_exponential(n):
 
 class ReconnectingWebSocket(object):
     """
-    ReconnectingWebSocket(url, protos=None) -> new instance
+    ReconnectingWebSocket(url, protos=None, cookies=None) -> new instance
 
     An automatically reconnecting WebSocket wrapper. url is the WebSocket
     URL to connect to. protos is an indication on which WebSocket subprotocols
-    may be used.
+    may be used. cookies is a cookies.CookieJar instance that is used to
+    store/retrieve cookies, or None for no cookie management.
 
     Instance attributes are:
     url    : The URL to connect to. Initialized from the same-named
@@ -123,7 +124,11 @@ class ReconnectingWebSocket(object):
              a safer way of achieving that).
     protos : Which WebSocket subprotocols may be used. May be None, a single
              string, or a list of strings. See client.connect() for more
-             details.
+             details. Initialized from the same-named constructor parameter.
+    cookies: A cookies.CookieJar instance (or anything with a compatible
+             interface; see client.connect()) to use for cookie management,
+             or None for no cookie management. Initialized from the same-named
+             constructor parameter.
     backoff: The connection backoff algorithm to use. Defaults to
              backoff_linear(). This is a function mapping an integer to a
              floating value; the parameter is the (zero-based) index of the
@@ -165,14 +170,15 @@ class ReconnectingWebSocket(object):
 
     USE_WTHREAD = True
 
-    def __init__(self, url, protos=None):
+    def __init__(self, url, protos=None, cookies=None):
         """
-        __init__(url, protos=None) -> None
+        __init__(url, protos=None, cookies=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
         self.url = url
         self.protos = protos
+        self.cookies = cookies
         self.backoff = backoff_linear
         self.on_connecting = None
         self.on_connected = None
@@ -443,16 +449,19 @@ class ReconnectingWebSocket(object):
         Concurrency note: This method is called with the internal monitor lock
         held and should therefore finish quickly.
         """
-        return {'url': self.url, 'protos': self.protos}
+        return {'url': self.url, 'protos': self.protos,
+                'cookies': self.cookies}
 
-    def _do_connect(self, url, protos):
+    def _do_connect(self, url, protos, cookies):
         """
-        _do_connect(url, protos) -> WebSocketFile
+        _do_connect(url, protos, cookies) -> WebSocketFile
 
         Actually establish a WebSocket connection and return it. url is the
         WebSocket URL to connect to. protos is an indication on which
         subprotocols to use (see the same-named instance attribute for
-        details). Overriding methods may specify additional parameters.
+        details). cookies is a cookies.CookieJar instance or None and used
+        for cookie management; see the same-named instance attribute for
+        details. Overriding methods may specify additional parameters.
 
         The return value is expected to be a valid WebSocketFile with an "id"
         attribute containing a comparable and hashable object that uniquely
@@ -465,7 +474,7 @@ class ReconnectingWebSocket(object):
         URL) should be retrieved in _conn_params() instead; see there for
         more details.
         """
-        conn = client.connect(url, protos)
+        conn = client.connect(url, protos, cookies=cookies)
         conn.id = uuid.uuid4()
         return conn
 
@@ -946,20 +955,21 @@ class WebSocketSession(object):
             self.id = id
 
     @classmethod
-    def create(cls, url, protos=None, **kwds):
+    def create(cls, url, protos=None, cookies=None, **kwds):
         """
-        create(url, protos=None, conn_cls=None, **kwds) -> new instance
+        create(url, protos=None, cookies=None, conn_cls=None, **kwds)
+            -> new instance
 
         Create a new WebSocketSession along with a new enclosed
-        ReconnectingWebSocket. url and protos are forwarded to the
-        ReconnectingWebSocket constructor; conn_cls (defaulting to
-        ReconnectingWebSocket) defines the class to instantiate as the
+        ReconnectingWebSocket. url, protos, and cookies are forwarded to the
+        ReconnectingWebSocket constructor; conn_cls (keyword-only, defaulting
+        to ReconnectingWebSocket) defines the class to instantiate as the
         underlying connection; other keyword arguments are forwarded to the
         WebSocketSession constructor.
         """
         conn_cls = kwds.pop('conn_cls', None)
         if conn_cls is None: conn_cls = ReconnectingWebSocket
-        return cls(conn_cls(url, protos), **kwds)
+        return cls(conn_cls(url, protos, cookies=cookies), **kwds)
 
     def __init__(self, conn, scheduler=None):
         """
