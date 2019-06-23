@@ -9,6 +9,16 @@ In some (or many) cases, multiple WebSocket connections to the same URL are
 WebSocketSession class that transparently handles re-connecting to a WebSocket
 endpoint, retrying commands whose results may have been missed, etc.
 
+Event handling note: Some classes in this module allow their users to install
+callbacks for certain "events" by setting instance attributes. An event EVT
+is handled by a method called _on_EVT(); the latter invokes an instance
+attribute called on_EVT (without a leading underscore) unless the latter is
+None. The externally specified handler receives the same arguments as the
+method (aside from "self"). When overriding the event handler method, it is
+strongly advisable to invoke the parent class' method (unless noted
+otherwise). Each class lists the names of events for which this convention
+applies.
+
 This module is NYI.
 """
 
@@ -138,14 +148,6 @@ class ReconnectingWebSocket(object):
              The backoff_*() module-level functions provide a few ready-to-use
              implementations to plug into this.
 
-    For various events (see the on_*() methods), callbacks can be specified
-    via the correpondingly-named *_cb instance attributes; the callbacks (if
-    not None) are called with the same arguments as the event handler methods
-    (excluding the "self" argument) by the event handlers' default
-    implementations. Overriding methods are strongly advised to call the
-    parent class' implementation to preserve this behavior (but see also
-    _on_error()).
-
     Read-only instance attributes are:
     state     : The current connection state as one of the SST_* constants.
                 Reading this attribute is not particularly useful as it might
@@ -160,9 +162,25 @@ class ReconnectingWebSocket(object):
                  regardless of this setting; if it is not, writing operations
                  are performed by the threads that request them.
 
+    This class emits the following events (see the module docstring):
+    connecting   : Invoked when an underlying connection is about to be
+                   established. Should connecting fail, there is *no* paired
+                   "connected" event.
+    connected    : Invoked after an underlying connection has been
+                   successfully established.
+    message      : Invoked when a message is received from the underlying
+                   connection.
+    disconnecting: Invoked just before closing the underlying connection. The
+                   event handler may try to send messages, but responses might
+                   not arrive.
+    disconnected : Invoked after closing the underlying connection.
+    error        : Invoked when an exception is caught. The exception's
+                   traceback etc. may be inspected. See also the error
+                   handling note below.
+
     Note that this is not a drop-in replacement for the WebSocketFile class.
 
-    Error handling note: The on_*() event handler methods and various
+    Error handling note: The _on_*() event handler methods and various
     callbacks are not shielded against errors in overridden implementations;
     exceptions raised in them may bring the connection into an inconsistent
     state.
@@ -752,6 +770,19 @@ class WebSocketSession(object):
                still-live commands.
     queue    : A list of Command instance to be submitted when the connection
                is established (populated during reconnects etc.).
+
+    This class emits the following "events" (see the module docstring):
+    connected    : A connection has been established.
+    disconnecting: The connection is being torn down. Differently to
+                   ReconnectingWebSocket, commands may *not* be sent.
+    event        : An Event (as defined above) not matching any known command
+                   has been received.
+    error        : An exception occurred. The exception's traceback etc. may
+                   be inspected.
+    All event handlers (except the "error" one, which must be called from the
+    block that caught the exception) are executed on the Scheduler this
+    instance references. Errors in event handlers are caught, forwarded to
+    _on_error(), and suppressed.
     """
 
     class Command(object):
@@ -790,6 +821,12 @@ class WebSocketSession(object):
         class (as there is only one class for incoming frames and labelling
         frames unrelated to any command as "responses" was deemed worse than
         the current naming scheme).
+
+        This class provides various event handler methods (on_*());
+        differently from other classes in this module, they are invoked
+        directly (instead of via _on_*() methods). Exceptions raised inside
+        them are caught, passed to the parent's _on_error() method, and
+        suppressed.
         """
 
         def __init__(self, data, id=None, responses=0, resendable=False):
