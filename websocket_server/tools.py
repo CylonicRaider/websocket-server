@@ -663,12 +663,26 @@ class Scheduler(object):
     """
     Scheduler() -> new instance
 
-    An enhanced variant of the standard library's sched module. This allows
-    other threads to submit tasks while the scheduler is waiting for the next
-    task and have the submitted tasks execute at the correct time. Scheduled
-    tasks can be "daemonic" (a scheduler continues running while there are
-    non-daemonic tasks), and the scheduler can be "held" by other threads,
-    preventing it from shutting down while they might submit tasks.
+    A Scheduler implements potentially delayed execution of tasks (represented
+    as Python callables) on a worker thread (with submission from arbitrary
+    background threads permitted).
+
+    A Scheduler continues running while there are non-"daemonic" tasks in its
+    queue and/or while there are active "holds" on it. Daemonic tasks allow
+    executing periodic actions without blocking the Scheduler indefinitely;
+    holds allow background threads to ensure the scheduler is running while
+    they might submit tasks to it.
+
+    Exceptions (deriving from the Exception class) raised in tasks are caught,
+    passed to an optional user-defined error handler, and suppressed. The
+    error handler is set via the on_error instance attribute; if not None, it
+    is expected to be a callable that accepts a single positional argument
+    (the exception being handled) and returns nothing.
+
+    See also the "sched" module in the standard library. A key difference to
+    that module's event scheduler is that this Scheduler allows submitting
+    tasks while the Scheduler is waiting for the next task to run (without
+    additional effort).
     """
 
     class Task(Future):
@@ -906,7 +920,8 @@ class Scheduler(object):
         The default implementation invokes the on_error instance attribute
         unless that is None.
         """
-        if self.on_error is not None: self.on_error(exc)
+        handler = self.on_error
+        if handler is not None: handler(exc)
 
     def run(self):
         """
