@@ -392,12 +392,16 @@ class Future(object):
     """
     Future(cb=None, lock=None) -> new instance
 
-    A wrapper around an object that may have yet to be computed. The
-    computation of the object is either represented by the callable cb, which
-    is called with no arguments and returns the computed object; or happens
-    outside this Future with the result assigned via the set() method (if cb
-    is None). lock, if not None, specifies the lock to synchronize internal
-    operations on (defaulting to a new lock of an appropriate type).
+    A wrapper around a value that may become available in the future. cb is
+    a callback to compute the value, or None to indicate that the value must
+    be set explicitly; if specified, the callback takes no arguments and
+    returns the value to resolve the Future to. lock is used for thread
+    synchronization (and defaults to a new reentrant lock).
+
+    The Future can be *resolved* to a value by either invoking the stored
+    callback (if any) via run() or explicitly setting the value via set().
+    Alternatively, the Future can *fail* to resolve when the callback raises
+    an exception or cancel() is called.
 
     Read-only instance attributes are:
     cb       : The callback producing this Future's value (if any).
