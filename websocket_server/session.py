@@ -40,27 +40,27 @@ __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
            'ReconnectingWebSocket', 'WebSocketSession']
 
-SST_IDLE          = 'IDLE'
-SST_DISCONNECTED  = 'DISCONNECTED'
-SST_CONNECTING    = 'CONNECTING'
-SST_CONNECTED     = 'CONNECTED'
-SST_INTERRUPTED   = 'INTERRUPTED'
-SST_DISCONNECTING = 'DISCONNECTING'
+SST_IDLE          = 'IDLE'          # Fully inactive; no connection.
+SST_DISCONNECTED  = 'DISCONNECTED'  # Not connected; might reconnect soon.
+SST_CONNECTING    = 'CONNECTING'    # Trying to establish a connection.
+SST_CONNECTED     = 'CONNECTED'     # Fully connected.
+SST_INTERRUPTED   = 'INTERRUPTED'   # Partially disconnected (may still read).
+SST_DISCONNECTING = 'DISCONNECTING' # Connection is being closed.
 
-CST_NEW         = 'NEW'
-CST_SENDING     = 'SENDING'
-CST_SENT        = 'SENT'
-CST_SEND_FAILED = 'SEND_FAILED'
-CST_CONFIRMED   = 'CONFIRMED'
-CST_CANCELLED   = 'CANCELLED'
+CST_NEW         = 'NEW'         # Command has never been sent.
+CST_SENDING     = 'SENDING'     # Command is being sent.
+CST_SENT        = 'SENT'        # Command has been sent but not responded to.
+CST_SEND_FAILED = 'SEND_FAILED' # Sending the command failed.
+CST_CONFIRMED   = 'CONFIRMED'   # Command has been responded to.
+CST_CANCELLED   = 'CANCELLED'   # Command has been cancelled.
 
-ERRS_RTHREAD    = 'rthread'
-ERRS_WS_CONNECT = 'connect'
-ERRS_WS_RECV    = 'ws_recv'
-ERRS_WS_SEND    = 'ws_send'
-ERRS_SCHEDULER  = 'scheduler'
-ERRS_SERIALIZE  = 'serialize'
-ERRS_CALLBACK   = 'callback'
+ERRS_RTHREAD    = 'rthread'   # Fatal uncaught error in reader thread.
+ERRS_WS_CONNECT = 'connect'   # Exception raised while connecting.
+ERRS_WS_RECV    = 'ws_recv'   # Exception raised while reading from WS.
+ERRS_WS_SEND    = 'ws_send'   # Exception while writing to or closing WS.
+ERRS_SCHEDULER  = 'scheduler' # Uncaught error in Scheduler task.
+ERRS_SERIALIZE  = 'serialize' # Error while trying to serialize a Command.
+ERRS_CALLBACK   = 'callback'  # Uncaught error in event handler callback.
 
 SWALLOW_CLASSES_CONNECT = (IOError, ProtocolError)
 SWALLOW_CLASSES_RECV    = (IOError,)
