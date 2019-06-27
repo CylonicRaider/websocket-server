@@ -41,11 +41,11 @@ __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'ReconnectingWebSocket', 'WebSocketSession']
 
 SST_IDLE          = 'IDLE'          # Fully inactive; no connection.
-SST_DISCONNECTED  = 'DISCONNECTED'  # Not connected; might reconnect soon.
 SST_CONNECTING    = 'CONNECTING'    # Trying to establish a connection.
 SST_CONNECTED     = 'CONNECTED'     # Fully connected.
 SST_INTERRUPTED   = 'INTERRUPTED'   # Partially disconnected (may still read).
 SST_DISCONNECTING = 'DISCONNECTING' # Connection is being closed.
+SST_DISCONNECTED  = 'DISCONNECTED'  # Not connected; might reconnect soon.
 
 CST_NEW         = 'NEW'         # Command has never been sent.
 CST_SENDING     = 'SENDING'     # Command is being sent.
@@ -157,26 +157,62 @@ class ReconnectingWebSocket(object):
     conn      : The current WebSocket connection (if any) as a WebSocketFile.
 
     Class attributes (overridable on instances) are:
-    USE_WTHREAD: Whether a background thread should be created for writing to
-                 the underlying connection. If a thread is present, it is used
-                 regardless of this setting; if it is not, writing operations
-                 are performed by the threads that request them.
+    USE_WTHREAD: Whether a writer thread should be created when connecting
+                 (see below). This setting only takes effect when a writer is
+                 about to be *created*; aside from that, a writer thread is
+                 used if-and-only-if it is present.
+
+    When active, a ReconnectingWebSocket uses one or two background threads.
+    The *reader thread* is responsible for establishing the underlying
+    connection, reading from it, and tearing it down; it is expected to spend
+    most of its time waiting for the next incoming message. The optional
+    *writer thread* is responsible for writing messages into the underlying
+    connection and initiating shutdowns of the connection (when those are
+    requested locally); if the writer thread is not used, the threads that
+    request writing (or closing) operations perform them themselves,
+    potentially blocking. The threads are created (automatically) whenever a
+    connection is initiated (as long as they are not there); when a disconnect
+    is requested, they clean themselves up after the connection is fully
+    closed.
+
+    During its life cycle, a ReconnectingWebSocket transitions between
+    multiple states, which are described below (unless noted otherwise, a
+    state's successor is the state described just below it):
+    IDLE         : The initial state. There is no connection and none has been
+                   requested.
+    CONNECTING   : A connection is being established (at least, attempts are
+                   made).
+    CONNECTED    : A connection has been established. Two-way traffic can
+                   happen. If a disconnect is requested while the connection
+                   was being established, this state is transient and is
+                   replaced by DISCONNECTING immediately. The next state is
+                   either INTERRUPTED or DISCONNECTING.
+    INTERRUPTED  : A disconnect has been requested locally. Messages can no
+                   longer be sent. Waiting for the other side to confirm the
+                   disconnect.
+    DISCONNECTING: Received a disconnect request from the other side; closing
+                   the underlying connection fully. No messages can be sent or
+                   received.
+    DISCONNECTED : The background worker threads are active, but there is no
+                   connection. The next state is either CONNECTING or IDLE.
+    Each state corresponds to a module-level SST_* constant (see also the
+    "state" attribute above).
 
     This class emits the following events (see the module docstring):
-    connecting   : Invoked when an underlying connection is about to be
-                   established. Should connecting fail, there is *no* paired
-                   "connected" event.
-    connected    : Invoked after an underlying connection has been
-                   successfully established.
-    message      : Invoked when a message is received from the underlying
+    connecting   : Emitted just after entering the CONNECTING state, or when a
+                   connection attempt has failed and another is made (note
+                   that there is no paired "connected" event in this case).
+    connected    : Emitted just after entering the CONNECTED state.
+    message      : Emitted when a message is received from the underlying
                    connection.
-    disconnecting: Invoked just before closing the underlying connection. The
-                   event handler may try to send messages, but responses might
-                   not arrive.
-    disconnected : Invoked after closing the underlying connection.
-    error        : Invoked when an exception is caught. The exception's
-                   traceback etc. may be inspected. See also the error
-                   handling note below.
+    disconnecting: Emitted just before closing the underlying connection,
+                   immediately after entering the INTERRUPTED or DISCONNECTING
+                   state (whichever comes first). The event handler may try to
+                   send messages, but responses might not arrive.
+    disconnected : Emitted just after entering the DISCONNECTED state.
+    error        : Emitted when an exception is caught. The exception's
+                   traceback etc. may be inspected by the callback. See also
+                   the error handling note below.
 
     Note that this is not a drop-in replacement for the WebSocketFile class.
 
@@ -334,7 +370,7 @@ class ReconnectingWebSocket(object):
             if conn is not None and do_disconnect:
                 self._do_disconnect(conn)
         def sleep_check():
-            # Run in an implicit "with self:" block.
+            # Run in a "with self:" block.
             return (self.state_goal == SST_CONNECTED)
         this_thread = threading.current_thread()
         conn = None
