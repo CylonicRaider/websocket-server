@@ -788,15 +788,14 @@ class WebSocketSession(object):
 
     A wrapper around a ReconnectingWebSocket providing high-level message
     submission and reception facilities. conn is a ReconnectingWebSocket (or
-    an instance of a subclass) providing low-level message handling.
-    Theoretically, an entirely different class (using a different underlying
-    transport) could be substituted here. scheduler is a Scheduler instance
-    that event handlers are executed in.
+    an instance of a subclass, which could theoretically employ an entirely
+    different transport) providing low-level message handling. scheduler is a
+    Scheduler instance that event handlers are executed by.
 
     Messages sent into the WebSocket are called "commands" and are represented
     by the nested Command class; messages received from the WebSocket are
     called "events" (regardless of their relation to previous commands) and
-    are represented by the Event class.
+    are represented by the nested Event class.
 
     Read-only instance attributes are:
     conn     : The connection wrapped by this WebSocketSession, as passed to
@@ -804,15 +803,13 @@ class WebSocketSession(object):
     scheduler: The Scheduler responsible for running high-level callbacks.
     commands : An ordered mapping from ID-s to Command instances representing
                still-live commands.
-    queue    : A list of Command instance to be submitted when the connection
-               is established (populated during reconnects etc.).
+    queue    : A collections.deque of Command-s pending being sent.
 
     This class emits the following "events" (see the module docstring):
     connected    : A connection has been established.
     disconnecting: The connection is being torn down. Differently to
                    ReconnectingWebSocket, commands may *not* be sent.
-    event        : An Event (as defined above) not matching any known command
-                   has been received.
+    event        : An Event not matching any known command has been received.
     error        : An exception occurred. The exception's traceback etc. may
                    be inspected.
     All event handlers (except the "error" one, which must be called from the
