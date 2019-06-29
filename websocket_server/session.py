@@ -1227,14 +1227,13 @@ class WebSocketSession(object):
         happens on the scheduler thread; this influences whether the command's
         callback is invoked synchronously or not.
 
-        This transitions the command into the CANCELLED state, removes
-        references to it from internal indexes, and calls the command's
-        _on_cancelled() handler.
+        This transitions the command into the CANCELLED state, (partially)
+        removes references to it from internal indexes, and calls the
+        command's _on_cancelled() handler.
         """
         with self:
             cmd.state = CST_CANCELLED
             self.commands.pop(cmd.id, None)
-            # FIXME: Also search the rest of the queue?
             if self.queue and self.queue[0] is cmd:
                 self.queue.popleft()
         if on_scheduler:
@@ -1282,13 +1281,20 @@ class WebSocketSession(object):
 
         Internal method: Backend of submit().
 
-        This tries to send the first message in the send queue; the message is
-        not removed from the queue until sending finishes.
+        This tries to send the first message in the send queue (discarding
+        cancelled messages); the message is not removed from the queue until
+        sending finishes.
         """
         with self:
-            if not self.queue or self._send_queued: return
             conn = self.conn
-            cmd = self.queue[0]
+            if self._send_queued: return
+            while 1:
+                if not self.queue: return
+                cmd = self.queue[0]
+                if cmd.state == CST_CANCELLED:
+                    self.queue.popleft()
+                else:
+                    break
             self._send_queued = True
         try:
             data = cmd.serialize()
