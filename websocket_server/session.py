@@ -810,6 +810,8 @@ class WebSocketSession(object):
     disconnecting: The connection is being torn down. Differently to
                    ReconnectingWebSocket, commands may *not* be sent.
     event        : An Event not matching any known command has been received.
+                   The event handler receives the Event object as the only
+                   positional argument.
     error        : An exception occurred. The exception's traceback etc. may
                    be inspected.
     All event handlers (except the "error" one, which must be called from the
@@ -855,11 +857,23 @@ class WebSocketSession(object):
         frames unrelated to any command as "responses" was deemed worse than
         the current naming scheme).
 
-        This class provides various event handler methods (on_*());
-        differently from other classes in this module, they are invoked
-        directly (instead of via _on_*() methods). Exceptions raised inside
-        them are caught, passed to the parent's _on_error() method, and
-        suppressed.
+        This class emits the following events (see the module docstring):
+        response : A response associated to the command has arrived. The event
+                   handler receives the Event object representing the response
+                   as the only positional argument.
+        cancelled: The command could not finish successfully (e.g. because the
+                   command is not safe-to-resend and the connection was broken
+                   at an infelicitous time). The event handler may resubmit
+                   the command anyway, but should be aware that it might take
+                   effect twice in that case.
+        Additional _on_*() methods are provided but not mapped to explicit
+        events. Concrete implementations might override them, potentially
+        exposing more callback attributes. All event handler methods (and thus
+        callbacks) are executed by the Scheduler of the enclosing
+        WebSocketSession and are (assuming a corresponding configuration)
+        serialized w.r.t. each other. Exceptions raised in event handlers are
+        caught, passed to the enclosing WebSocketSession's _on_error() method,
+        and suppressed.
         """
 
         def __init__(self, data, id=None, responses=0, resendable=False):
@@ -872,6 +886,8 @@ class WebSocketSession(object):
             self.id = id
             self.responses = responses
             self.resendable = resendable
+            self.on_response = None
+            self.on_cancelled = None
             self.state = CST_NEW
 
         def serialize(self):
@@ -887,41 +903,41 @@ class WebSocketSession(object):
             """
             return self.data
 
-        def on_sending(self):
+        def _on_sending(self):
             """
-            on_sending() -> None
+            _on_sending() -> None
 
             Event handler method invoked when the command has started being
             sent.
 
             Executed on the scheduler thread; in particular, some bits of the
             command may have already left the process; however, this is
-            guaranteed to be scheduled before any related on_response()
+            guaranteed to be scheduled before any related _on_response()
             (unless the server guesses the command's ID). The default
             implementation does nothing.
             """
             pass
 
-        def on_sent(self, ok):
+        def _on_sent(self, ok):
             """
-            on_sent(ok) -> None
+            _on_sent(ok) -> None
 
             Event handler method invoked when the command has been sent (or it
             has been tried to send it). ok tells whether the send has actually
             been successful.
 
             Note that a server might respond to the command before it has been
-            fully received (or transmitted); in particular, on_response()
-            might be invoked before this method (see also on_sending()).
+            fully received (or transmitted); in particular, _on_response()
+            might be invoked before this method (see also _on_sending()).
 
             Executed on the scheduler thread. The default implementation does
             nothing.
             """
             pass
 
-        def on_response(self, evt):
+        def _on_response(self, evt):
             """
-            on_response(evt) -> None
+            _on_response(evt) -> None
 
             Event handler method invoked when an event with the same ID as
             this command (i.e. a response to this command) arrives.
@@ -929,11 +945,11 @@ class WebSocketSession(object):
             Executed on the scheduler thread. The default implementation does
             nothing.
             """
-            pass
+            run_cb(self.on_response, evt)
 
-        def on_disconnect(self, transient, ok, safe):
+        def _on_disconnect(self, transient, ok, safe):
             """
-            on_disconnect(transient, ok, safe) -> bool
+            _on_disconnect(transient, ok, safe) -> bool
 
             Event handler method invoked when the underlying connection has
             been closed. transient and ok tells whether the close is
@@ -948,9 +964,9 @@ class WebSocketSession(object):
             """
             return self.resendable or safe
 
-        def on_connect(self):
+        def _on_connect(self):
             """
-            on_connect() -> bool
+            _on_connect() -> bool
 
             Event handler method invoked when the underlying connection has
             been established (in particular after a disconnect). The return
@@ -960,14 +976,14 @@ class WebSocketSession(object):
             them for the new connection.
 
             Executed on the scheduler thread. The default implementation
-            always returns True (relying on on_disconnect() to filter out
+            always returns True (relying on _on_disconnect() to filter out
             not-safe-to-resend commands).
             """
             return True
 
-        def on_cancelled(self):
+        def _on_cancelled(self):
             """
-            on_cancelled() -> None
+            _on_cancelled() -> None
 
             Event handler method invoked when the command cannot be completed.
 
@@ -980,7 +996,7 @@ class WebSocketSession(object):
             nothing. Other implementations might inspect the command's state
             and make additional decisions.
             """
-            pass
+            run_cb(self.on_cancelled)
 
     class Event(object):
         """
@@ -1118,7 +1134,7 @@ class WebSocketSession(object):
             checklist = tuple(self.commands.values())
         sendlist = []
         for cmd in checklist:
-            if not self._run_cb(cmd.on_connect):
+            if not self._run_cb(cmd._on_connect):
                 self._cancel_command(cmd, True)
                 continue
             sendlist.append(cmd)
@@ -1146,7 +1162,7 @@ class WebSocketSession(object):
                        for cmd in self.commands.values()]
             self._send_queued = False
         for cmd, safe in runlist:
-            if not self._run_cb(cmd.on_disconnect, transient, ok, safe):
+            if not self._run_cb(cmd._on_disconnect, transient, ok, safe):
                 self._cancel_command(cmd, True)
         self._run_cb(self.on_disconnecting, connid, transient, ok)
 
@@ -1158,7 +1174,7 @@ class WebSocketSession(object):
 
         Executed on the scheduler thread. This implementation constructs an
         Event from msg, dispatches it to either a command with the same ID
-        (see Command.on_response()) or this instance's _on_event() (if there
+        (see Command._on_response()) or this instance's _on_event() (if there
         is no such command), and garbage-collects the dispatched-to command
         (if any and as necessary).
         """
@@ -1171,7 +1187,7 @@ class WebSocketSession(object):
                                                  CST_SENT, CST_SEND_FAILED):
                 cmd.state = CST_CONFIRMED
         if cmd is not None:
-            self._run_cb(cmd.on_response, evt)
+            self._run_cb(cmd._on_response, evt)
         else:
             self._run_cb(self._on_event, evt)
         with self:
@@ -1213,7 +1229,7 @@ class WebSocketSession(object):
 
         This transitions the command into the CANCELLED state, removes
         references to it from internal indexes, and calls the command's
-        on_cancelled() handler.
+        _on_cancelled() handler.
         """
         with self:
             cmd.state = CST_CANCELLED
@@ -1222,9 +1238,9 @@ class WebSocketSession(object):
             if self.queue and self.queue[0] is cmd:
                 self.queue.popleft()
         if on_scheduler:
-            self._run_cb(cmd.on_cancelled)
+            self._run_cb(cmd._on_cancelled)
         else:
-            self._run_cb_async(cmd.on_cancelled)
+            self._run_cb_async(cmd._on_cancelled)
 
     def _on_command_sending(self, cmd):
         """
@@ -1234,12 +1250,12 @@ class WebSocketSession(object):
         sent. Executed synchronously just before the actual send.
 
         The default implementation updates the command's state and schedules
-        its on_sending() method to be run.
+        its _on_sending() method to be run.
         """
         with self:
             if cmd.state in (CST_NEW, CST_CONFIRMED, CST_SEND_FAILED):
                 cmd.state = CST_SENDING
-            self._run_cb_async(cmd.on_sending)
+            self._run_cb_async(cmd._on_sending)
 
     def _on_command_sent(self, cmd, ok):
         """
@@ -1249,13 +1265,13 @@ class WebSocketSession(object):
         sent. ok tels whether the send was successful.
 
         Executed synchronously just after the send. The default implementation
-        updates the command's state and schedules its on_sent() method to be
+        updates the command's state and schedules its _on_sent() method to be
         run.
         """
         with self:
             if cmd.state in (CST_NEW, CST_SENDING):
                 cmd.state = CST_SENT if ok else CST_SEND_FAILED
-            self._run_cb_async(cmd.on_sent, ok)
+            self._run_cb_async(cmd._on_sent, ok)
             self.queue.popleft()
             self._send_queued = False
         self._do_submit()
