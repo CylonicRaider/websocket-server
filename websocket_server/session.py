@@ -857,6 +857,29 @@ class WebSocketSession(object):
         frames unrelated to any command as "responses" was deemed worse than
         the current naming scheme).
 
+        During its lifetime, a Command transitions between the following
+        states (unless noted otherwise, a state's successor is the state
+        defined just below it):
+        NEW        : The command may have been queued but was not sent yet.
+        SENDING    : The command is being sent. The next state is either SENT
+                     or SEND_FAILED.
+        SENT       : The command was fully sent. Note that this does not imply
+                     that the other side has fully *received* the command
+                     (this can happen due to the OS' internal buffering). The
+                     next state is CONFIRMED.
+        SEND_FAILED: An exception occurred while sending the command, perhaps
+                     an I/O error. The underlying ReconnectingWebSocket is
+                     about to reconnect, and this command will be resent or
+                     cancelled altogether. The command might still become
+                     CONFIRMED (if, e.g., the other side received enough bits
+                     of the command to determine its ID, or it guessed the
+                     ID).
+        CONFIRMED  : A response to the command has been received. When enough
+                     responses arrive, the command is dropped and there is no
+                     successor state.
+        CANCELLED  : The command could not be resent (or sent in the first
+                     place) and was discarded. There is no successor state.
+
         This class emits the following events (see the module docstring):
         response : A response associated to the command has arrived. The event
                    handler receives the Event object representing the response
