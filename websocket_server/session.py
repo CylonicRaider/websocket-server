@@ -299,7 +299,9 @@ class ReconnectingWebSocket(object):
         otherwise it is unmodified.
         """
         def disconnect_task():
-            self._on_disconnecting(disconnect_conn.id, connect, disconnect_ok)
+            "Helper function responsible for shutting down the connection."
+            self._on_disconnecting(disconnect_conn.id, (not connect),
+                                   disconnect_ok)
             self._do_disconnect(disconnect_conn, True)
         disconnect_conn = None
         with self:
@@ -374,7 +376,7 @@ class ReconnectingWebSocket(object):
             return (self.state_goal == SST_CONNECTED)
         this_thread = threading.current_thread()
         conn = None
-        transient = False
+        is_reconnect = False
         conn_attempt = 0
         try:
             while 1:
@@ -387,7 +389,7 @@ class ReconnectingWebSocket(object):
                     self.state = SST_CONNECTING
                     params = self._conn_params()
                 # Connect.
-                self._on_connecting(transient)
+                self._on_connecting(not is_reconnect)
                 try:
                     conn = self._do_connect(**params)
                 except Exception as exc:
@@ -411,14 +413,14 @@ class ReconnectingWebSocket(object):
                     if self._connected is not None:
                         self._connected.set(conn.id)
                         self._connected = None
-                self._on_connected(conn.id, transient)
+                self._on_connected(conn.id, (not is_reconnect), (not do_read))
                 # Read messages (unless we should disconnect immediately).
                 if do_read:
                     self._do_read_loop(conn)
                 # Prepare for disconnecting.
                 with self:
                     run_dc_hook = (self.state != SST_INTERRUPTED)
-                    transient = (self.state_goal == SST_CONNECTED)
+                    is_reconnect = (self.state_goal == SST_CONNECTED)
                     ok = self._disconnect_ok
                     self.state = SST_DISCONNECTING
                     self.conn = None
@@ -428,7 +430,7 @@ class ReconnectingWebSocket(object):
                 # a state where it does try to read a confirmation so that we
                 # do not have to take particular care of this.
                 if run_dc_hook:
-                    self._on_disconnecting(conn.id, transient, ok)
+                    self._on_disconnecting(conn.id, (not is_reconnect), ok)
                 self._do_disconnect(conn)
                 old_conn_id = conn.id
                 conn = None
@@ -438,7 +440,7 @@ class ReconnectingWebSocket(object):
                     if self._disconnected is not None:
                         self._disconnected.set(old_conn_id)
                         self._disconnected = None
-                self._on_disconnected(old_conn_id, transient, ok)
+                self._on_disconnected(old_conn_id, (not is_reconnect), ok)
         except Exception as exc:
             self._on_error(exc, ERRS_RTHREAD)
         finally:
@@ -463,11 +465,11 @@ class ReconnectingWebSocket(object):
                 if self.state == SST_CONNECTED:
                     self.state = SST_INTERRUPTED
                     dc_conn = self.conn
-                    dc_transient = (self.state_goal == SST_CONNECTED)
+                    dc_final = (self.state_goal != SST_CONNECTED)
                     queue.clear()
             if dc_conn is not None:
                 # ok is always False as this is not an orderly disconnect.
-                self._on_disconnecting(dc_conn.id, dc_transient, False)
+                self._on_disconnecting(dc_conn.id, dc_final, False)
                 self._do_disconnect(dc_conn, True)
             return True
         this_thread = threading.current_thread()
@@ -612,32 +614,33 @@ class ReconnectingWebSocket(object):
             ret.run()
         return ret
 
-    def _on_connecting(self, transient):
+    def _on_connecting(self, initial):
         """
-        _on_connecting(transient) -> None
+        _on_connecting(initial) -> None
 
         Event handler method invoked before a connection is established.
-        transient tells whether this is part of a reconnect (True) or an
-        "initial" connect (False). Since the connection is not established
-        yet, no ID is provided.
+        initial tells whether this is *not* part of a reconnect. Since the
+        connection is not established yet, no ID is provided.
 
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.on_connecting, transient)
+        run_cb(self.on_connecting, initial)
 
-    def _on_connected(self, connid, transient):
+    def _on_connected(self, connid, initial, transient):
         """
-        _on_connect(connid, transient) -> None
+        _on_connected(connid, initial, transient) -> None
 
         Event handler method invoked when a connection is established.
-        connid is the ID of the connection. transient tells whether this is
-        part of a reconnect (True) or an "initial" connect (False).
+        connid is the ID of the connection; initial tells whether this is
+        *not* part of a reconnect; transient tells whether the connection will
+        be closed again immediately because the parameters have changed in the
+        meantime.
 
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.on_connected, connid, transient)
+        run_cb(self.on_connected, connid, initial, transient)
 
     def _on_message(self, msg, connid):
         """
@@ -652,35 +655,33 @@ class ReconnectingWebSocket(object):
         """
         run_cb(self.on_message, msg, connid)
 
-    def _on_disconnecting(self, connid, transient, ok):
+    def _on_disconnecting(self, connid, final, ok):
         """
-        _on_disconnecting(connid, transient, ok) -> None
+        _on_disconnecting(connid, final, ok) -> None
 
         Event handler method invoked when a connection is about to be closed.
-        connid is the ID of the connection. transient tells whether this is
-        part of a reconnect (True) or a "final" close (False). ok tells
-        whether the disconnect was "regular" (True) rather than caused by some
-        sort of error (False).
+        connid is the ID of the connection; final tells whether this is *not*
+        part of a reconnect; ok tells whether the disconnect was "regular"
+        (True) rather than caused by some sort of error (False).
 
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.on_disconnecting, connid, transient, ok)
+        run_cb(self.on_disconnecting, connid, final, ok)
 
-    def _on_disconnected(self, connid, transient, ok):
+    def _on_disconnected(self, connid, final, ok):
         """
-        _on_disconnect(connid, transient, ok) -> None
+        _on_disconnect(connid, final, ok) -> None
 
         Event handler method invoked when a connection has been closed.
-        connid is the ID of the connection. transient tells whether this is
-        part of a reconnect (True) or a "final" close (False). ok tells
-        whether the disconnect was "regular" (True) rather than caused by some
-        sort of error (False).
+        connid is the ID of the connection; final tells whether this is *not*
+        part of a reconnect; ok tells whether the disconnect was "regular"
+        (True) rather than caused by some sort of error (False).
 
         The default implementation invokes the corresponding callback; see the
         class docstring for details.
         """
-        run_cb(self.on_disconnected, connid, transient, ok)
+        run_cb(self.on_disconnected, connid, final, ok)
 
     def _on_error(self, exc, source, swallow=False):
         """
@@ -970,12 +971,12 @@ class WebSocketSession(object):
             """
             run_cb(self.on_response, evt)
 
-        def _on_disconnect(self, transient, ok, safe):
+        def _on_disconnect(self, final, ok, safe):
             """
-            _on_disconnect(transient, ok, safe) -> bool
+            _on_disconnect(final, ok, safe) -> bool
 
             Event handler method invoked when the underlying connection has
-            been closed. transient and ok tells whether the close is
+            been closed. final and ok tell whether the close is *not*
             (presumably) temporary and *not* caused by an error, respectively;
             safe tells whether the command is in a state where it may be
             resent safely (i.e. has not been (perhaps partially) sent without
@@ -987,22 +988,26 @@ class WebSocketSession(object):
             """
             return self.resendable or safe
 
-        def _on_connect(self):
+        def _on_connect(self, initial, transient):
             """
-            _on_connect() -> bool
+            _on_connect(initial, transient) -> bool
 
             Event handler method invoked when the underlying connection has
-            been established (in particular after a disconnect). The return
-            value indicates whether the command is to be (re-)sent.
+            been established (in particular after a disconnect). initial and
+            transient tells whether the connection is *not* part of a
+            reconnect and going to be immediately closed again, respectively.
+            The return value indicates whether the command is to be (re-)sent.
 
             Implementations may mutate the internal data in order to upate
             them for the new connection.
 
             Executed on the scheduler thread. The default implementation
-            always returns True (relying on _on_disconnect() to filter out
-            not-safe-to-resend commands).
+            always returns the Boolean negative of transient (since there is
+            little use to resend a command into a connection that is going to
+            be gone soon). This relies on _on_disconnect() to filter out
+            not-safe-to-resend commands.
             """
-            return True
+            return (not transient)
 
         def _on_cancelled(self):
             """
@@ -1145,9 +1150,9 @@ class WebSocketSession(object):
         """
         self.scheduler.add_now(lambda: self._run_cb(func, *args))
 
-    def _on_connected(self, connid, transient):
+    def _on_connected(self, connid, initial, transient):
         """
-        _on_connected(connid, transient) -> None
+        _on_connected(connid, initial, transient) -> None
 
         Event handler method invoked when a connection is established.
 
@@ -1157,7 +1162,7 @@ class WebSocketSession(object):
             checklist = tuple(self.commands.values())
         sendlist = []
         for cmd in checklist:
-            if not self._run_cb(cmd._on_connect):
+            if not self._run_cb(cmd._on_connect, initial, transient):
                 self._cancel_command(cmd, True)
                 continue
             sendlist.append(cmd)
@@ -1168,9 +1173,9 @@ class WebSocketSession(object):
         self._run_cb(self.on_connected, connid, transient)
         self._do_submit()
 
-    def _on_disconnecting(self, connid, transient, ok):
+    def _on_disconnecting(self, connid, final, ok):
         """
-        _on_disconnecting(connid, transient, ok) -> None
+        _on_disconnecting(connid, final, ok) -> None
 
         Event handler method invoked when a connection is about to be shut
         down.
@@ -1185,9 +1190,9 @@ class WebSocketSession(object):
                        for cmd in self.commands.values()]
             self._send_queued = False
         for cmd, safe in runlist:
-            if not self._run_cb(cmd._on_disconnect, transient, ok, safe):
+            if not self._run_cb(cmd._on_disconnect, final, ok, safe):
                 self._cancel_command(cmd, True)
-        self._run_cb(self.on_disconnecting, connid, transient, ok)
+        self._run_cb(self.on_disconnecting, connid, final, ok)
 
     def _on_raw_message(self, msg, connid):
         """
