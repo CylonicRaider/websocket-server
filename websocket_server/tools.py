@@ -665,17 +665,24 @@ class Future(object):
 
 class Scheduler(object):
     """
-    Scheduler() -> new instance
+    Scheduler(autostart=True) -> new instance
 
     A Scheduler implements potentially delayed execution of tasks (represented
     as Python callables) on a worker thread (with submission from arbitrary
-    background threads permitted).
+    background threads permitted). autostart, if True, permits the Scheduler
+    to spawn background threads for task execution.
 
     A Scheduler continues running while there are non-"daemonic" tasks in its
     queue and/or while there are active "holds" on it. Daemonic tasks allow
     executing periodic actions without blocking the Scheduler indefinitely;
     holds allow background threads to ensure the scheduler is running while
     they might submit tasks to it.
+
+    In order to do anything, the Scheduler must be *run*. By default,
+    background threads running the Scheduler are created automatically as
+    necessary. If more fine-grained control is desired, the "autorun"
+    constructor parameter (and instance attribute) can be set to False and
+    run() or start() can be invoked directly.
 
     Exceptions (deriving from the Exception class) raised in tasks are caught,
     passed to an optional user-defined error handler, and suppressed. The
@@ -805,16 +812,18 @@ class Scheduler(object):
                 self.parent.cond.notifyAll()
                 return True
 
-    def __init__(self):
+    def __init__(self, autostart=True):
         """
-        __init__() -> None
+        __init__(autostart=True) -> None
 
         Instance initializer; see the class docstring for details.
         """
+        self.autostart = autostart
         self.queue = []
         self.cond = threading.Condition()
         self.on_error = None
         self._references = 0
+        self._running = 0
         self._seq = AtomicSequence(lock=self.cond)
 
     def time(self):
@@ -860,6 +869,7 @@ class Scheduler(object):
             if not task.daemon:
                 task._referencing = True
                 self._references += 1
+                self._do_autostart()
             self.cond.notifyAll()
         return task
 
@@ -934,25 +944,47 @@ class Scheduler(object):
         Run until no non-daemonic tasks and no holds on this scheduler are
         left.
         """
-        while 1:
-            with self.cond:
-                now = self.time()
-                while self._references > 0 and (not self.queue or
-                        self.queue[0].timestamp > now):
-                    if self.queue:
-                        self.wait(self.queue[0].timestamp - now)
-                    else:
-                        self.wait(None)
+        with self.cond:
+            self._running += 1
+        try:
+            while 1:
+                with self.cond:
                     now = self.time()
-                if self._references <= 0: break
-                head = heapq.heappop(self.queue)
-                if head.cancelled: continue
-                head.started = True
-            head.run()
+                    while self._references > 0 and (not self.queue or
+                            self.queue[0].timestamp > now):
+                        if self.queue:
+                            self.wait(self.queue[0].timestamp - now)
+                        else:
+                            self.wait(None)
+                        now = self.time()
+                    if self._references <= 0: break
+                    head = heapq.heappop(self.queue)
+                    if head.cancelled: continue
+                    head.started = True
+                head.run()
+        finally:
+            with self.cond:
+                self._running -= 1
 
-    def start(self, daemon=True):
+    def _do_autostart(self):
         """
-        start(daemon=True) -> threading.Thread
+        _do_autostart() -> threading.Thread or None
+
+        Potentially spawn a background worker thread for executing tasks
+        submitted to this Scheduler.
+
+        This does not create more threads than the numeric value of the
+        "autostart" attribute; remark that the values False and True are
+        interpreted as 0 and 1, respectively, which implies the behavior
+        described in the class docstring.
+        """
+        with self.cond:
+            if self._running < self.autostart:
+                return self.start()
+
+    def start(self, daemon=False):
+        """
+        start(daemon=False) -> threading.Thread
 
         Start a background thread run()ning this Scheduler. daemon specifies
         whether the thread is daemonic. The thread object is returned.
