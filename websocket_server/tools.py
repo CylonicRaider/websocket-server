@@ -846,6 +846,16 @@ class Scheduler(object):
         with self.cond:
             self.cond.wait(delay)
 
+    def hold(self):
+        """
+        hold() -> Hold
+
+        Return a Hold instance referencing this Scheduler.
+
+        See the documentation of Hold for more details.
+        """
+        return self.Hold(self)
+
     def clear(self):
         """
         clear() -> None
