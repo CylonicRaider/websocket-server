@@ -821,6 +821,10 @@ class WebSocketSession(object):
     _on_error(), and suppressed.
     """
 
+    # Synchronization note: WebSocketSession's lock comes outside the
+    # Scheduler's lock. Remark that the Scheduler never invokes callbacks with
+    # its own lock held.
+
     class Command(object):
         """
         Command(data, id=None, responses=0, resendable=False) -> new instance
@@ -1100,8 +1104,10 @@ class WebSocketSession(object):
         self.on_error = None
         self.commands = collections.OrderedDict()
         self.queue = collections.deque()
-        self._send_queued = False
         self._lock = threading.RLock()
+        self._send_queued = False
+        self._outer_hold = scheduler.hold()
+        self._inner_hold = scheduler.hold()
         self._install_callbacks()
 
     def __enter__(self):
@@ -1120,9 +1126,11 @@ class WebSocketSession(object):
         connection and scheduler.
         """
         conn, sched = self.conn, self.scheduler
+        conn.on_connecting = self._on_connecting
         conn.on_connected = sched.wrap(self._on_connected)
         conn.on_message = sched.wrap(self._on_raw_message)
         conn.on_disconnecting = sched.wrap(self._on_disconnecting)
+        conn.on_disconnected = self._on_disconnected
         conn.on_error = self._on_error
         sched.on_error = lambda exc: self._on_error(exc, ERRS_SCHEDULER, True)
 
@@ -1150,11 +1158,21 @@ class WebSocketSession(object):
         """
         self.scheduler.add_now(lambda: self._run_cb(func, *args))
 
+    def _on_connecting(self, initial):
+        """
+        _on_connecting(initial) -> None
+
+        Event handler method invoked when a connection is being established.
+
+        Executed *synchronously* in a background thread.
+        """
+        self._inner_hold.acquire()
+
     def _on_connected(self, connid, initial, transient):
         """
         _on_connected(connid, initial, transient) -> None
 
-        Event handler method invoked when a connection is established.
+        Event handler method invoked when a connection has been established.
 
         Executed on the scheduler thread.
         """
@@ -1172,27 +1190,6 @@ class WebSocketSession(object):
                               if cmd not in already_pending)
         self._run_cb(self.on_connected, connid, transient)
         self._do_submit()
-
-    def _on_disconnecting(self, connid, final, ok):
-        """
-        _on_disconnecting(connid, final, ok) -> None
-
-        Event handler method invoked when a connection is about to be shut
-        down.
-
-        Executed on the scheduler thread; in particular, the connection is
-        no longer usable.
-        """
-        def can_resend(cmd):
-            return cmd.state not in (CST_SENDING, CST_SENT, CST_SEND_FAILED)
-        with self:
-            runlist = [(cmd, can_resend(cmd))
-                       for cmd in self.commands.values()]
-            self._send_queued = False
-        for cmd, safe in runlist:
-            if not self._run_cb(cmd._on_disconnect, final, ok, safe):
-                self._cancel_command(cmd, True)
-        self._run_cb(self.on_disconnecting, connid, final, ok)
 
     def _on_raw_message(self, msg, connid):
         """
@@ -1224,6 +1221,37 @@ class WebSocketSession(object):
                 if cmd.responses <= 0:
                     self.commands.pop(evt.id, None)
 
+    def _on_disconnecting(self, connid, final, ok):
+        """
+        _on_disconnecting(connid, final, ok) -> None
+
+        Event handler method invoked when a connection is about to be shut
+        down.
+
+        Executed on the scheduler thread; in particular, the connection is
+        no longer usable.
+        """
+        def can_resend(cmd):
+            return cmd.state not in (CST_SENDING, CST_SENT, CST_SEND_FAILED)
+        with self:
+            runlist = [(cmd, can_resend(cmd))
+                       for cmd in self.commands.values()]
+            self._send_queued = False
+        for cmd, safe in runlist:
+            if not self._run_cb(cmd._on_disconnect, final, ok, safe):
+                self._cancel_command(cmd, True)
+        self._run_cb(self.on_disconnecting, connid, final, ok)
+
+    def _on_disconnected(self, connid, final, ok):
+        """
+        _on_disconnected(connid, final, ok) -> None
+
+        Event handler method invoked when a connection has been torn down.
+
+        Executed synchronously in a background thread.
+        """
+        self._inner_hold.release()
+
     def _on_event(self, evt):
         """
         _on_event(evt) -> None
@@ -1240,7 +1268,7 @@ class WebSocketSession(object):
         """
         _on_error(exc, source, swallow=False) -> None
 
-        Event handler method invoked when an error occurs. See
+        Event handler method invoked (synchronously) when an error occurs. See
         ReconnectingWebSocket._on_error() for details.
         """
         # Not using self._run_cb() to avoid infinite recursion.
@@ -1363,7 +1391,9 @@ class WebSocketSession(object):
         are forwarded to ReconnectingWebSocket.connect_async(); see there for
         details.
         """
-        return run_async(self.conn.connect_async, wait, **kwds)
+        with self:
+            self._outer_hold.acquire()
+            return run_async(self.conn.connect_async, wait, **kwds)
 
     def reconnect(self, wait=True, **kwds):
         """
@@ -1372,7 +1402,9 @@ class WebSocketSession(object):
         Re-establish the underlying connection. See connect() and
         ReconnectingWebSocket.reconnect_async() for details.
         """
-        return run_async(self.conn.reconnect_async, wait, **kwds)
+        with self:
+            self._outer_hold.acquire()
+            return run_async(self.conn.reconnect_async, wait, **kwds)
 
     def disconnect(self, wait=True, **kwds):
         """
@@ -1381,4 +1413,6 @@ class WebSocketSession(object):
         Close the underlying connection. See connect() and
         ReconnectingWebSocket.disconnect_async() for details.
         """
-        return run_async(self.conn.disconnect_async, wait, **kwds)
+        with self:
+            self._outer_hold.release()
+            return run_async(self.conn.disconnect_async, wait, **kwds)
