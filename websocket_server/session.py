@@ -1176,20 +1176,21 @@ class WebSocketSession(object):
 
         Executed on the scheduler thread.
         """
-        with self:
-            checklist = tuple(self.commands.values())
-        sendlist = []
-        for cmd in checklist:
-            if not self._run_cb(cmd._on_connect, initial, transient):
-                self._cancel_command(cmd, True)
-                continue
-            sendlist.append(cmd)
-        with self:
-            already_pending = frozenset(self.queue)
-            self.queue.extend(cmd for cmd in sendlist
-                              if cmd not in already_pending)
-        self._run_cb(self.on_connected, connid, transient)
-        self._do_submit()
+        if not transient:
+            with self:
+                checklist = tuple(self.commands.values())
+            sendlist = []
+            for cmd in checklist:
+                if not self._run_cb(cmd._on_connect, initial, transient):
+                    self._cancel_command(cmd, True)
+                    continue
+                sendlist.append(cmd)
+            with self:
+                already_pending = frozenset(self.queue)
+                self.queue.extend(cmd for cmd in sendlist
+                                  if cmd not in already_pending)
+            self._do_submit()
+        self._run_cb(self.on_connected, connid, initial, transient)
 
     def _on_raw_message(self, msg, connid):
         """
