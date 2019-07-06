@@ -1101,6 +1101,7 @@ class WebSocketSession(object):
         self.queue = collections.deque()
         self._lock = threading.RLock()
         self._send_queued = False
+        self._connection_transient = False
         self._outer_hold = scheduler.hold()
         self._inner_hold = scheduler.hold()
         self._early_queue = collections.deque()
@@ -1201,9 +1202,9 @@ class WebSocketSession(object):
         def login_callback():
             self._on_logged_in(connid, initial)
         self._run_cb(self.on_connected, connid, initial, transient)
-        if transient:
-            return
         with self:
+            self._connection_transient = transient
+            if transient: return
             self.state = SST_LOGGING_IN
         self._do_login(connid, initial, login_callback)
 
@@ -1283,9 +1284,10 @@ class WebSocketSession(object):
 
         Executed on the scheduler thread; in particular, the connection is
         no longer usable. The default implementation updates the session
-        state, cancels any "early" commands left, invokes the _on_disconnect()
-        method of any "regular" still-pending commands, and invokes the
-        corresponding event handling callback.
+        state, cancels any "early" commands left, invokes (if the connection
+        being closed is not "transient" -- see _on_connected()) the
+        _on_disconnect() method of any still-pending "regular" commands, and
+        runs the corresponding event handling callback.
         """
         def can_resend(cmd):
             return cmd.state not in (CST_SENDING, CST_SENT, CST_SEND_FAILED)
@@ -1293,17 +1295,22 @@ class WebSocketSession(object):
             self.state = SST_DISCONNECTED
             cancellist = tuple(self._early_queue)
             self._early_queue.clear()
-            runlist = [(cmd, can_resend(cmd))
-                       for cmd in self.commands.values()]
+            if self._connection_transient:
+                runlist = None
+            else:
+                runlist = [(cmd, can_resend(cmd))
+                           for cmd in self.commands.values()]
             self._send_queued = False
+            self._connection_transient = False
         for cmd in cancellist:
             self._cancel_command(cmd, True)
-        cancellist = frozenset(cancellist)
-        for cmd, safe in runlist:
-            if cmd in cancellist:
-                pass
-            elif not self._run_cb(cmd._on_disconnect, final, ok, safe):
-                self._cancel_command(cmd, True)
+        if runlist is not None:
+            cancellist = frozenset(cancellist)
+            for cmd, safe in runlist:
+                if cmd in cancellist:
+                    pass
+                elif not self._run_cb(cmd._on_disconnect, final, ok, safe):
+                    self._cancel_command(cmd, True)
         self._run_cb(self.on_disconnecting, connid, final, ok)
 
     def _on_disconnected(self, connid, final, ok):
@@ -1417,7 +1424,7 @@ class WebSocketSession(object):
         message is not removed from the queue until sending finishes.
         """
         with self:
-            if self._send_queued: return
+            if self._send_queued or self.state == SST_DISCONNECTED: return
             conn = self.conn
             if self.state == SST_LOGGING_IN:
                 queue = self._early_queue
