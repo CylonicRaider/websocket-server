@@ -810,6 +810,16 @@ class WebSocketSession(object):
                still-live commands.
     queue    : A collections.deque of Command-s pending being sent.
 
+    Multiple background threads are involved in maintaining a
+    WebSocketSession: The underlying ReconnectingWebSocket contributes one
+    or two (see that class' documentation for more details); WebSocketSession
+    itself executes all external callbacks using a Scheduler. As default, all
+    of these are created automatically (but see the Scheduler documentation
+    for exceptions); those maintained by ReconnectingWebSocket are shut down
+    automatically whenever the WebSocketSession is closed, while the Scheduler
+    may or may not continue running (depending on whether it is used by
+    anything else).
+
     This class emits the following "events" (see the module docstring):
     connected    : An underlying connection has been established.
     logged_in    : The session is fully set up; commands will be sent.
