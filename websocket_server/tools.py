@@ -690,6 +690,12 @@ class Scheduler(object):
     is expected to be a callable that accepts a single positional argument
     (the exception being handled) and returns nothing.
 
+    Concurrency note: Python converts SIGINT signals into KeyboardInterrupt
+    exceptions raised in the main thread. Since those may occur at arbitrary
+    times while arbitrary code is running, it is not safe to run() a Scheduler
+    in the main thread. It is more advisable to execute the scheduler in a
+    background thread and to wait() for it in the main thread.
+
     See also the "sched" module in the standard library. A key difference to
     that module's event scheduler is that this Scheduler allows submitting
     tasks while the Scheduler is waiting for the next task to run (without
