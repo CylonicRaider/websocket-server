@@ -47,6 +47,10 @@ RWST_INTERRUPTED   = 'INTERRUPTED'   # Partially disconnected (still reading).
 RWST_DISCONNECTING = 'DISCONNECTING' # Connection is being closed.
 RWST_DISCONNECTED  = 'DISCONNECTED'  # Not connected; might reconnect soon.
 
+SST_DISCONNECTED = 'DISCONNECTED' # Underlying connection not fully in place.
+SST_LOGGING_IN   = 'LOGGING_IN'   # Executing early commands.
+SST_CONNECTED    = 'CONNECTED'    # Connection fully established.
+
 CST_NEW         = 'NEW'         # Command has never been sent.
 CST_SENDING     = 'SENDING'     # Command is being sent.
 CST_SENT        = 'SENT'        # Command has been sent but not responded to.
@@ -802,17 +806,19 @@ class WebSocketSession(object):
     conn     : The connection wrapped by this WebSocketSession, as passed to
                the constructor.
     scheduler: The Scheduler responsible for running high-level callbacks.
+    state    : The current state of the WebSocketSession as a SST_* constant.
     commands : An ordered mapping from ID-s to Command instances representing
                still-live commands.
     queue    : A collections.deque of Command-s pending being sent.
 
     This class emits the following "events" (see the module docstring):
-    connected    : A connection has been established.
-    disconnecting: The connection is being torn down. Differently to
-                   ReconnectingWebSocket, commands may *not* be sent.
+    connected    : An underlying connection has been established.
+    logged_in    : The session is fully set up; commands will be sent.
     event        : An Event not matching any known command has been received.
                    The event handler receives the Event object as the only
                    positional argument.
+    disconnecting: The connection is being torn down. Differently to
+                   ReconnectingWebSocket, commands may *not* be sent.
     error        : An exception occurred. The exception's traceback etc. may
                    be inspected.
     All event handlers (except the "error" one, which must be called from the
@@ -988,30 +994,28 @@ class WebSocketSession(object):
             *not* to be cancelled as obsolete.
 
             Executed on the scheduler thread. The default implementation
-            returns True iff any of the resendable attribute or safe is true.
+            returns True if-and-only-if any of the resendable attribute or
+            safe is true.
             """
             return self.resendable or safe
 
-        def _on_connect(self, initial, transient):
+        def _on_connect(self, initial):
             """
-            _on_connect(initial, transient) -> bool
+            _on_connect(initial) -> bool
 
             Event handler method invoked when the underlying connection has
-            been established (in particular after a disconnect). initial and
-            transient tells whether the connection is *not* part of a
-            reconnect and going to be immediately closed again, respectively.
-            The return value indicates whether the command is to be (re-)sent.
+            been established (in particular after a disconnect). initial tells
+            whether the connection is *not* part of a reconnect. The return
+            value indicates whether the command is to be (re-)sent.
 
             Implementations may mutate the internal data in order to upate
             them for the new connection.
 
             Executed on the scheduler thread. The default implementation
-            always returns the Boolean negative of transient (since there is
-            little use to resend a command into a connection that is going to
-            be gone soon). This relies on _on_disconnect() to filter out
+            always returns True, relying on _on_disconnect() to filter out
             not-safe-to-resend commands.
             """
-            return (not transient)
+            return True
 
         def _on_cancelled(self):
             """
@@ -1098,7 +1102,9 @@ class WebSocketSession(object):
         if scheduler is None: scheduler = Scheduler()
         self.conn = conn
         self.scheduler = scheduler
+        self.state = SST_DISCONNECTED
         self.on_connected = None
+        self.on_logged_in = None
         self.on_disconnecting = None
         self.on_event = None
         self.on_error = None
@@ -1108,6 +1114,7 @@ class WebSocketSession(object):
         self._send_queued = False
         self._outer_hold = scheduler.hold()
         self._inner_hold = scheduler.hold()
+        self._early_queue = collections.deque()
         self._install_callbacks()
 
     def __enter__(self):
@@ -1158,13 +1165,36 @@ class WebSocketSession(object):
         """
         self.scheduler.add_now(lambda: self._run_cb(func, *args))
 
+    def _do_login(self, connid, initial, cb):
+        """
+        _do_login(connid, initial, cb) -> None
+
+        Perform final setup work on an already-established underlying
+        connection. connid and initial are forwarded from _on_connected(); cb
+        is a callback to be invoked (with no arguments) when the setup is
+        finished.
+
+        As the method name suggests, the "setup work" might be, e.g.,
+        authenticating to other side of the underlying connection. Separating
+        out this stage allows subclasses to restore state before
+        commands from previous connections (which might, e.g., be privileged)
+        are resent.
+
+        This method is executed on the scheduler thread and must do likewise
+        with cb. The default implementation does nothing aside from invoking
+        the callback immediately.
+        """
+        cb()
+
     def _on_connecting(self, initial):
         """
         _on_connecting(initial) -> None
 
         Event handler method invoked when a connection is being established.
 
-        Executed *synchronously* in a background thread.
+        Executed *synchronously* in a background thread. The default
+        implementation acquires a hold on the underlying Scheduler to prepare
+        for submitting various things to it.
         """
         self._inner_hold.acquire()
 
@@ -1174,23 +1204,56 @@ class WebSocketSession(object):
 
         Event handler method invoked when a connection has been established.
 
-        Executed on the scheduler thread.
+        Executed on the scheduler thread. See also _on_logged_in(). The
+        default implementation invokes the corresponding callback, and, unless
+        transient is true, sets the session state to LOGGING_IN and invokes
+        the _do_login() method.
         """
-        if not transient:
-            with self:
-                checklist = tuple(self.commands.values())
-            sendlist = []
-            for cmd in checklist:
-                if not self._run_cb(cmd._on_connect, initial, transient):
-                    self._cancel_command(cmd, True)
-                    continue
-                sendlist.append(cmd)
-            with self:
-                already_pending = frozenset(self.queue)
-                self.queue.extend(cmd for cmd in sendlist
-                                  if cmd not in already_pending)
-            self._do_submit()
+        def login_callback():
+            self._on_logged_in(connid, initial)
         self._run_cb(self.on_connected, connid, initial, transient)
+        if transient:
+            return
+        with self:
+            self.state = SST_LOGGING_IN
+        self._do_login(connid, initial, login_callback)
+
+    def _on_logged_in(self, connid, initial):
+        """
+        _on_logged_in(connid, initial) -> None
+
+        Event handler method invoked when a connection has been fully
+        established (see _do_login() for additional setup).
+
+        Executed on the scheduler thread. In contrast to _on_connected(), this
+        method is only invoked for non-transient connections, so there is no
+        "transient" parameter. The default implementation cancels any "early"
+        commands left behind, schedules some of the regular commands to
+        be resent (see the Command class for details), and invokes the
+        corresponding event handling callback.
+        """
+        with self:
+            self.state = SST_CONNECTED
+            cancellist = tuple(self._early_queue)
+            self._early_queue.clear()
+            checklist = tuple(self.commands.values())
+        for cmd in cancellist:
+            self._cancel_command(cmd, True)
+        cancellist = frozenset(cancellist)
+        sendlist = []
+        for cmd in checklist:
+            if cmd in cancellist:
+                pass
+            elif not self._run_cb(cmd._on_connect, initial):
+                self._cancel_command(cmd, True)
+            else:
+                sendlist.append(cmd)
+        with self:
+            already_pending = frozenset(self.queue)
+            self.queue.extend(cmd for cmd in sendlist
+                              if cmd not in already_pending)
+        self._run_cb(self.on_logged_in, connid, initial)
+        self._do_submit()
 
     def _on_raw_message(self, msg, connid):
         """
@@ -1230,16 +1293,27 @@ class WebSocketSession(object):
         down.
 
         Executed on the scheduler thread; in particular, the connection is
-        no longer usable.
+        no longer usable. The default implementation updates the session
+        state, cancels any "early" commands left, invokes the _on_disconnect()
+        method of any "regular" still-pending commands, and invokes the
+        corresponding event handling callback.
         """
         def can_resend(cmd):
             return cmd.state not in (CST_SENDING, CST_SENT, CST_SEND_FAILED)
         with self:
+            self.state = SST_DISCONNECTED
+            cancellist = tuple(self._early_queue)
+            self._early_queue.clear()
             runlist = [(cmd, can_resend(cmd))
                        for cmd in self.commands.values()]
             self._send_queued = False
+        for cmd in cancellist:
+            self._cancel_command(cmd, True)
+        cancellist = frozenset(cancellist)
         for cmd, safe in runlist:
-            if not self._run_cb(cmd._on_disconnect, final, ok, safe):
+            if cmd in cancellist:
+                pass
+            elif not self._run_cb(cmd._on_disconnect, final, ok, safe):
                 self._cancel_command(cmd, True)
         self._run_cb(self.on_disconnecting, connid, final, ok)
 
@@ -1249,7 +1323,9 @@ class WebSocketSession(object):
 
         Event handler method invoked when a connection has been torn down.
 
-        Executed synchronously in a background thread.
+        Executed synchronously in a background thread. The default
+        implementation releases the hold on the Scheduler acquired in
+        _on_connecting().
         """
         self._inner_hold.release()
 
@@ -1289,11 +1365,16 @@ class WebSocketSession(object):
         command's _on_cancelled() handler.
         """
         with self:
+            run_callback = (cmd.state != CST_CANCELLED)
             cmd.state = CST_CANCELLED
             self.commands.pop(cmd.id, None)
             if self.queue and self.queue[0] is cmd:
                 self.queue.popleft()
-        if on_scheduler:
+            elif self._early_queue and self._early_queue[0] is cmd:
+                self._early_queue.popleft()
+        if not run_callback:
+            pass
+        elif on_scheduler:
             self._run_cb(cmd._on_cancelled)
         else:
             self._run_cb_async(cmd._on_cancelled)
@@ -1321,14 +1402,18 @@ class WebSocketSession(object):
         sent. ok tels whether the send was successful.
 
         Executed synchronously just after the send. The default implementation
-        updates the command's state and schedules its _on_sent() method to be
-        run.
+        updates the command's state (and internal command queues), schedules
+        the command's _on_sent() method to be run, and initiates flushing more
+        queued commands (if any) into the underlying connection.
         """
         with self:
             if cmd.state in (CST_NEW, CST_SENDING):
                 cmd.state = CST_SENT if ok else CST_SEND_FAILED
             self._run_cb_async(cmd._on_sent, ok)
-            self.queue.popleft()
+            if self.queue and self.queue[0] is cmd:
+                self.queue.popleft()
+            elif self._early_queue and self._early_queue[0] is cmd:
+                self._early_queue.popleft()
             self._send_queued = False
         self._do_submit()
 
@@ -1338,18 +1423,22 @@ class WebSocketSession(object):
 
         Internal method: Backend of submit().
 
-        This tries to send the first message in the send queue (discarding
-        cancelled messages); the message is not removed from the queue until
-        sending finishes.
+        This tries to send the first message in the send queue appropriate for
+        the current session state after discarding cancelled messages; the
+        message is not removed from the queue until sending finishes.
         """
         with self:
-            conn = self.conn
             if self._send_queued: return
+            conn = self.conn
+            if self.state == SST_LOGGING_IN:
+                queue = self._early_queue
+            else:
+                queue = self.queue
             while 1:
-                if not self.queue: return
-                cmd = self.queue[0]
+                if not queue: return
+                cmd = queue[0]
                 if cmd.state == CST_CANCELLED:
-                    self.queue.popleft()
+                    queue.popleft()
                 else:
                     break
             self._send_queued = True
@@ -1368,19 +1457,41 @@ class WebSocketSession(object):
                               lambda: self._on_command_sending(cmd),
                               lambda ok: self._on_command_sent(cmd, ok))
 
-    def submit(self, cmd):
+    def _submit(self, cmd, early=False):
         """
-        submit(cmd) -> None
+        _submit(cmd, early=False) -> None
 
-        Send the given Command instance into the underlying connection and
-        register it as waiting for responses (as necessary).
+        Extended version of submit() for use by subclasses. cmd is the Command
+        to be (eventually) sent; early defines whether the command is part of
+        setting up the session and thus should *not* wait until the setup
+        finishes; it is an error to specify early=True if the WebSocketSession
+        is not in the LOGGING_IN state.
         """
         with self:
             if cmd.id is not None and (cmd.responses is None or
                                        cmd.responses > 0):
                 self.commands[cmd.id] = cmd
-            self.queue.append(cmd)
+            if early:
+                if self.state != SST_LOGGING_IN:
+                    raise RuntimeError('May not submit early messages unless '
+                        'logging in')
+                self._early_queue.append(cmd)
+            else:
+                self.queue.append(cmd)
         self._do_submit()
+
+    def submit(self, cmd):
+        """
+        submit(cmd) -> None
+
+        Queue the given Command instance for being sent into the underlying
+        connection and register it as waiting for responses (as necessary).
+
+        If the session is already fully established, this also attempts to
+        actually submit the command (unless there already are other commands
+        being sent).
+        """
+        self._submit(cmd)
 
     def connect(self, wait=True, **kwds):
         """
