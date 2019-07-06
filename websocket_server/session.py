@@ -79,17 +79,6 @@ def run_cb(_func, *_args, **_kwds):
     """
     if _func is not None: return _func(*_args, **_kwds)
 
-def run_async(_func, _wait, *_args, **_kwds):
-    """
-    run_async(func, wait, *args, **kwds) -> Future
-
-    Convenience function that runs func(*args, **kwds) and optionally (i.e. if
-    wait is true) wait()s on the return value before re-returning it.
-    """
-    ret = _func(*_args, **_kwds)
-    if _wait: ret.wait()
-    return ret
-
 def backoff_constant(n):
     """
     backoff_constant(n) -> float
@@ -1505,7 +1494,9 @@ class WebSocketSession(object):
         """
         with self:
             self._outer_hold.acquire()
-            return run_async(self.conn.connect_async, wait, **kwds)
+            ret = self.conn.connect_async(**kwds)
+        if wait: ret.wait()
+        return ret
 
     def reconnect(self, wait=True, **kwds):
         """
@@ -1516,7 +1507,9 @@ class WebSocketSession(object):
         """
         with self:
             self._outer_hold.acquire()
-            return run_async(self.conn.reconnect_async, wait, **kwds)
+            ret = self.conn.reconnect_async(**kwds)
+        if wait: ret.wait()
+        return ret
 
     def disconnect(self, wait=True, **kwds):
         """
@@ -1527,4 +1520,6 @@ class WebSocketSession(object):
         """
         with self:
             self._outer_hold.release()
-            return run_async(self.conn.disconnect_async, wait, **kwds)
+            ret = self.conn.disconnect_async(**kwds)
+        if wait: ret.wait()
+        return ret
