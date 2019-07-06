@@ -31,8 +31,8 @@ from . import client
 from .exceptions import ProtocolError, ConnectionClosedError
 from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 
-__all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
-           'SST_INTERRUPTED', 'SST_DISCONNECTING',
+__all__ = ['RWST_IDLE', 'RWST_DISCONNECTED', 'RWST_CONNECTING',
+           'RWST_CONNECTED', 'RWST_INTERRUPTED', 'RWST_DISCONNECTING',
            'CST_NEW', 'CST_SENDING', 'CST_SENT', 'CST_SEND_FAILED',
            'CST_CONFIRMED', 'CST_CANCELLED',
            'ERRS_RTHREAD', 'ERRS_WS_CONNECT', 'ERRS_WS_RECV', 'ERRS_WS_SEND',
@@ -40,12 +40,12 @@ __all__ = ['SST_IDLE', 'SST_DISCONNECTED', 'SST_CONNECTING', 'SST_CONNECTED',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
            'ReconnectingWebSocket', 'WebSocketSession']
 
-SST_IDLE          = 'IDLE'          # Fully inactive; no connection.
-SST_CONNECTING    = 'CONNECTING'    # Trying to establish a connection.
-SST_CONNECTED     = 'CONNECTED'     # Fully connected.
-SST_INTERRUPTED   = 'INTERRUPTED'   # Partially disconnected (may still read).
-SST_DISCONNECTING = 'DISCONNECTING' # Connection is being closed.
-SST_DISCONNECTED  = 'DISCONNECTED'  # Not connected; might reconnect soon.
+RWST_IDLE          = 'IDLE'          # Fully inactive; no connection.
+RWST_CONNECTING    = 'CONNECTING'    # Trying to establish a connection.
+RWST_CONNECTED     = 'CONNECTED'     # Fully connected.
+RWST_INTERRUPTED   = 'INTERRUPTED'   # Partially disconnected (still reading).
+RWST_DISCONNECTING = 'DISCONNECTING' # Connection is being closed.
+RWST_DISCONNECTED  = 'DISCONNECTED'  # Not connected; might reconnect soon.
 
 CST_NEW         = 'NEW'         # Command has never been sent.
 CST_SENDING     = 'SENDING'     # Command is being sent.
@@ -149,11 +149,11 @@ class ReconnectingWebSocket(object):
              implementations to plug into this.
 
     Read-only instance attributes are:
-    state     : The current connection state as one of the SST_* constants.
+    state     : The current connection state as one of the RWST_* constants.
                 Reading this attribute is not particularly useful as it might
                 be changed by another thread immediately afterwards.
     state_goal: The state this ReconnectingWebSocket is trying to achieve,
-                either SST_DISCONNECTED or SST_CONNECTED.
+                either RWST_DISCONNECTED or RWST_CONNECTED.
     conn      : The current WebSocket connection (if any) as a WebSocketFile.
 
     Class attributes (overridable on instances) are:
@@ -195,7 +195,7 @@ class ReconnectingWebSocket(object):
                    received.
     DISCONNECTED : The background worker threads are active, but there is no
                    connection. The next state is either CONNECTING or IDLE.
-    Each state corresponds to a module-level SST_* constant (see also the
+    Each state corresponds to a module-level RWST_* constant (see also the
     "state" attribute above).
 
     This class emits the following events (see the module docstring):
@@ -240,8 +240,8 @@ class ReconnectingWebSocket(object):
         self.on_disconnecting = None
         self.on_disconnected = None
         self.on_error = None
-        self.state = SST_IDLE
-        self.state_goal = SST_DISCONNECTED
+        self.state = RWST_IDLE
+        self.state_goal = RWST_DISCONNECTED
         self.conn = None
         self._cond = threading.Condition()
         self._rthread = None
@@ -294,8 +294,8 @@ class ReconnectingWebSocket(object):
         Future that will resolve (to some unspecified value) when the
         requested operations are done (which may be immediately).
 
-        The "state_goal" instance attribute is set to SST_CONNECTED if connect
-        is true, otherwise to SST_DISCONNECTED if disconnect is true,
+        The "state_goal" instance attribute is set to RWST_CONNECTED if
+        connect is true, otherwise to RWST_DISCONNECTED if disconnect is true,
         otherwise it is unmodified.
         """
         def disconnect_task():
@@ -307,16 +307,16 @@ class ReconnectingWebSocket(object):
         with self:
             # Update attributes; prepare return value.
             if connect:
-                self.state_goal = SST_CONNECTED
-                if self.state == SST_CONNECTED:
+                self.state_goal = RWST_CONNECTED
+                if self.state == RWST_CONNECTED:
                     ret = Future.resolved()
                 else:
                     if self._connected is None:
                         self._connected = Future()
                     ret = self._connected
             elif disconnect:
-                self.state_goal = SST_DISCONNECTED
-                if self.state == SST_DISCONNECTED:
+                self.state_goal = RWST_DISCONNECTED
+                if self.state == RWST_DISCONNECTED:
                     ret = Future.resolved()
                 else:
                     if self._disconnected is None:
@@ -330,13 +330,13 @@ class ReconnectingWebSocket(object):
                 self._disconnect_ok = disconnect_ok
             # Disconnect if told to.
             if disconnect:
-                if self.state == SST_CONNECTING:
+                if self.state == RWST_CONNECTING:
                     # Wake up potentially sleeping reader thread.
                     self._cond.notifyAll()
-                elif self.state == SST_CONNECTED:
+                elif self.state == RWST_CONNECTED:
                     # Ensure the reader thread will be eventually woken;
                     # mark that that is going to happen.
-                    self.state = SST_INTERRUPTED
+                    self.state = RWST_INTERRUPTED
                     disconnect_conn = self.conn
             # Connect if told to; this amounts to spawning the reader thread
             # and letting it do its work.
@@ -362,7 +362,7 @@ class ReconnectingWebSocket(object):
             "Clean up instance state pointing at the existence of this thread"
             with self:
                 if self._rthread is this_thread:
-                    self.state = SST_IDLE
+                    self.state = RWST_IDLE
                     self._rthread = None
                     self.conn = None
                     if self._wthread is not None:
@@ -373,7 +373,7 @@ class ReconnectingWebSocket(object):
                 self._do_disconnect(conn)
         def sleep_check():
             # Run in a "with self:" block.
-            return (self.state_goal == SST_CONNECTED)
+            return (self.state_goal == RWST_CONNECTED)
         this_thread = threading.current_thread()
         conn = None
         is_reconnect = False
@@ -383,10 +383,10 @@ class ReconnectingWebSocket(object):
                 # Prepare for connecting, or detach.
                 with self:
                     # Detach if requested.
-                    if self.state_goal != SST_CONNECTED:
+                    if self.state_goal != RWST_CONNECTED:
                         detach(False)
                         break
-                    self.state = SST_CONNECTING
+                    self.state = RWST_CONNECTING
                     params = self._conn_params()
                 # Connect.
                 self._on_connecting(not is_reconnect)
@@ -402,13 +402,13 @@ class ReconnectingWebSocket(object):
                     conn_attempt = 0
                 # Done connecting.
                 with self:
-                    if self.state_goal == SST_CONNECTED:
+                    if self.state_goal == RWST_CONNECTED:
                         self._disconnect_ok = True
                         new_params = self._conn_params()
                         do_read = (new_params == params)
                     else:
                         do_read = False
-                    self.state = SST_CONNECTED
+                    self.state = RWST_CONNECTED
                     self.conn = conn
                     if self._connected is not None:
                         self._connected.set(conn.id)
@@ -419,10 +419,10 @@ class ReconnectingWebSocket(object):
                     self._do_read_loop(conn)
                 # Prepare for disconnecting.
                 with self:
-                    run_dc_hook = (self.state != SST_INTERRUPTED)
-                    is_reconnect = (self.state_goal == SST_CONNECTED)
+                    run_dc_hook = (self.state != RWST_INTERRUPTED)
+                    is_reconnect = (self.state_goal == RWST_CONNECTED)
                     ok = self._disconnect_ok
-                    self.state = SST_DISCONNECTING
+                    self.state = RWST_DISCONNECTING
                     self.conn = None
                 # Disconnect.
                 # If the disconnect is caused by a protocol violation by the
@@ -436,7 +436,7 @@ class ReconnectingWebSocket(object):
                 conn = None
                 # Done disconnecting.
                 with self:
-                    self.state = SST_DISCONNECTED
+                    self.state = RWST_DISCONNECTED
                     if self._disconnected is not None:
                         self._disconnected.set(old_conn_id)
                         self._disconnected = None
@@ -462,10 +462,10 @@ class ReconnectingWebSocket(object):
             with self:
                 if self._wthread is not this_thread:
                     return False
-                if self.state == SST_CONNECTED:
-                    self.state = SST_INTERRUPTED
+                if self.state == RWST_CONNECTED:
+                    self.state = RWST_INTERRUPTED
                     dc_conn = self.conn
-                    dc_final = (self.state_goal != SST_CONNECTED)
+                    dc_final = (self.state_goal != RWST_CONNECTED)
                     queue.clear()
             if dc_conn is not None:
                 # ok is always False as this is not an orderly disconnect.
@@ -727,7 +727,7 @@ class ReconnectingWebSocket(object):
         called).
         """
         ret = self._run_wthread(lambda: self._do_send(self.conn, data,
-            before_cb, after_cb), SST_CONNECTED)
+            before_cb, after_cb), RWST_CONNECTED)
         if ret is None:
             raise ConnectionClosedError('Cannot send to non-connected '
                 'ReconnectingWebSocket')
