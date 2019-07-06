@@ -776,6 +776,16 @@ class ReconnectingWebSocket(object):
         """
         return self._cycle_connstates(disconnect=True, disconnect_ok=ok)
 
+    def close(self):
+        """
+        close() -> None
+
+        Fully shut this ReconnectingWebSocket down.
+
+        This is a blocking alias for disconnect_async().
+        """
+        self.disconnect_async().wait()
+
 class WebSocketSession(object):
     """
     WebSocketSession(conn, scheduler=None) -> new instance
@@ -1530,3 +1540,13 @@ class WebSocketSession(object):
             ret = self.conn.disconnect_async(**kwds)
         if wait: ret.wait()
         return ret
+
+    def close(self):
+        """
+        close() -> None
+
+        Fully bring this WebSocketSession down.
+
+        This is a (blocking) alias for disconnect().
+        """
+        self.disconnect(wait=True)
