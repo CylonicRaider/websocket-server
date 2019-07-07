@@ -33,6 +33,7 @@ from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 
 __all__ = ['RWST_IDLE', 'RWST_DISCONNECTED', 'RWST_CONNECTING',
            'RWST_CONNECTED', 'RWST_INTERRUPTED', 'RWST_DISCONNECTING',
+           'SST_DISCONNECTED', 'SST_LOGGING_IN', 'SST_CONNECTED',
            'CST_NEW', 'CST_SENDING', 'CST_SENT', 'CST_SEND_FAILED',
            'CST_CONFIRMED', 'CST_CANCELLED',
            'ERRS_RTHREAD', 'ERRS_WS_CONNECT', 'ERRS_WS_RECV', 'ERRS_WS_SEND',
@@ -819,6 +820,18 @@ class WebSocketSession(object):
     automatically whenever the WebSocketSession is closed, while the Scheduler
     may or may not continue running (depending on whether it is used by
     anything else).
+
+    During its lifetime, a WebSocketSession alternates between multiple
+    states:
+    DISCONNECTED: The underlying connection is not present or being set up or
+                  torn down.
+    LOGGING_IN  : The underlying connection is established, the
+                  WebSocketSession implementation is performing additional
+                  setup work on it. Events may be received during this phase,
+                  but commands sent in response to them will be buffered until
+                  the WebSocketSession enters the CONNECTED state.
+    CONNECTED   : The underlying connection is fully present; commands may
+                  be submitted and events received.
 
     This class emits the following "events" (see the module docstring):
     connected    : An underlying connection has been established.
