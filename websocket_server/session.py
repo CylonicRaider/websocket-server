@@ -1381,6 +1381,24 @@ class WebSocketSession(object):
         run_cb(self.on_error, exc, source, swallow)
         if not swallow: raise
 
+    def _remove_command(self, cmd, forget=True):
+        """
+        _remove_command(cmd, forget=True) -> None
+
+        Internal: Remove the given command from the various sending queues,
+        and from the ID-to-command index is forget is true.
+
+        Note that cmd is *not* entirely removed if it is in the *middle* of
+        a sending queue.
+        """
+        with self:
+            if forget:
+                self.commands.pop(cmd.id, None)
+            if self.queue and self.queue[0] is cmd:
+                self.queue.popleft()
+            elif self._early_queue and self._early_queue[0] is cmd:
+                self._early_queue.popleft()
+
     def _cancel_command(self, cmd, on_scheduler=False):
         """
         _cancel_command(cmd, on_scheduler=False) -> None
@@ -1396,11 +1414,7 @@ class WebSocketSession(object):
         with self:
             run_callback = (cmd.state != CST_CANCELLED)
             cmd.state = CST_CANCELLED
-            self.commands.pop(cmd.id, None)
-            if self.queue and self.queue[0] is cmd:
-                self.queue.popleft()
-            elif self._early_queue and self._early_queue[0] is cmd:
-                self._early_queue.popleft()
+            self._remove_command(cmd)
         if not run_callback:
             pass
         elif on_scheduler:
@@ -1439,10 +1453,7 @@ class WebSocketSession(object):
             if cmd.state in (CST_NEW, CST_SENDING):
                 cmd.state = CST_SENT if ok else CST_SEND_FAILED
             self._run_cb_async(cmd._on_sent, ok)
-            if self.queue and self.queue[0] is cmd:
-                self.queue.popleft()
-            elif self._early_queue and self._early_queue[0] is cmd:
-                self._early_queue.popleft()
+            self._remove_command(cmd, False)
             self._send_queued = False
         self._do_submit()
 
