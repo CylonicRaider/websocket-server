@@ -19,7 +19,7 @@ strongly advisable to invoke the parent class' method (unless noted
 otherwise). Each class lists the names of events for which this convention
 applies.
 
-This module is NYI.
+This module is untested; expect bugs.
 """
 
 import sys, time
