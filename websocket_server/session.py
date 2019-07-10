@@ -1127,8 +1127,8 @@ class WebSocketSession(object):
         self.state = SST_DISCONNECTED
         self.on_connected = None
         self.on_logged_in = None
-        self.on_disconnecting = None
         self.on_event = None
+        self.on_disconnecting = None
         self.on_error = None
         self.commands = collections.OrderedDict()
         self.queue = collections.deque()
@@ -1152,7 +1152,7 @@ class WebSocketSession(object):
         """
         _install_callbacks() -> None
 
-        Wire up callbacks for interesting events into this instance's
+        Wire up callbacks for interesting events from this instance's
         connection and scheduler.
         """
         conn, sched = self.conn, self.scheduler
@@ -1267,16 +1267,16 @@ class WebSocketSession(object):
         for cmd in checklist:
             if cmd in cancellist:
                 pass
-            elif not self._run_cb(cmd._on_connect, initial):
-                self._cancel_command(cmd, True)
-            else:
+            elif self._run_cb(cmd._on_connect, initial):
                 sendlist.append(cmd)
+            else:
+                self._cancel_command(cmd, True)
         with self:
             already_pending = frozenset(self.queue)
             self.queue.extend(cmd for cmd in sendlist
                               if cmd not in already_pending)
-        self._run_cb(self.on_logged_in, connid, initial)
         self._do_submit()
+        self._run_cb(self.on_logged_in, connid, initial)
 
     def _on_raw_message(self, msg, connid):
         """
@@ -1293,20 +1293,31 @@ class WebSocketSession(object):
         evt = self.Event.deserialize(msg, connid)
         with self:
             cmd = self.commands.get(evt.id)
-            # A send that looks like it failed to us might manage to transfer
-            # enough data to identify the command nonetheless.
+            # A send that looks like it failed to us (thus CST_SEND_FAILED)
+            # might manage to transfer enough information to identify the
+            # command nonetheless.
             if cmd is not None and cmd.state in (CST_NEW, CST_SENDING,
                                                  CST_SENT, CST_SEND_FAILED):
                 cmd.state = CST_CONFIRMED
-        if cmd is not None:
-            self._run_cb(cmd._on_response, evt)
-        else:
-            self._run_cb(self._on_event, evt)
+        handler = self._on_event if cmd is not None else cmd._on_response
+        self._run_cb(handler, evt)
         with self:
             if cmd is not None and cmd.responses is not None:
                 cmd.responses -= 1
                 if cmd.responses <= 0:
                     self.commands.pop(evt.id, None)
+
+    def _on_event(self, evt):
+        """
+        _on_event(evt) -> None
+
+        Event handler method invoked when an Event that does not match any
+        known command is received.
+
+        Executed on the scheduler thread. The default implementation does
+        nothing (aside from calling the on_event attribute, if not None).
+        """
+        self._run_cb(self.on_event, evt)
 
     def _on_disconnecting(self, connid, final, ok):
         """
@@ -1358,18 +1369,6 @@ class WebSocketSession(object):
         """
         self._inner_hold.release()
 
-    def _on_event(self, evt):
-        """
-        _on_event(evt) -> None
-
-        Event handler method invoked when an Event that does not match any
-        known command is received.
-
-        Executed on the scheduler thread. The default implementation does
-        nothing (aside from calling the on_event attribute, if not None).
-        """
-        self._run_cb(self.on_event, evt)
-
     def _on_error(self, exc, source, swallow=False):
         """
         _on_error(exc, source, swallow=False) -> None
@@ -1380,47 +1379,6 @@ class WebSocketSession(object):
         # Not using self._run_cb() to avoid infinite recursion.
         run_cb(self.on_error, exc, source, swallow)
         if not swallow: raise
-
-    def _remove_command(self, cmd, forget=True):
-        """
-        _remove_command(cmd, forget=True) -> None
-
-        Internal: Remove the given command from the various sending queues,
-        and from the ID-to-command index is forget is true.
-
-        Note that cmd is *not* entirely removed if it is in the *middle* of
-        a sending queue.
-        """
-        with self:
-            if forget:
-                self.commands.pop(cmd.id, None)
-            if self.queue and self.queue[0] is cmd:
-                self.queue.popleft()
-            elif self._early_queue and self._early_queue[0] is cmd:
-                self._early_queue.popleft()
-
-    def _cancel_command(self, cmd, on_scheduler=False):
-        """
-        _cancel_command(cmd, on_scheduler=False) -> None
-
-        Cancel the given command. on_scheduler tells whether the invocation
-        happens on the scheduler thread; this influences whether the command's
-        callback is invoked synchronously or not.
-
-        This transitions the command into the CANCELLED state, (partially)
-        removes references to it from internal indexes, and calls the
-        command's _on_cancelled() handler.
-        """
-        with self:
-            run_callback = (cmd.state != CST_CANCELLED)
-            cmd.state = CST_CANCELLED
-            self._remove_command(cmd)
-        if not run_callback:
-            pass
-        elif on_scheduler:
-            self._run_cb(cmd._on_cancelled)
-        else:
-            self._run_cb_async(cmd._on_cancelled)
 
     def _on_command_sending(self, cmd):
         """
@@ -1457,6 +1415,47 @@ class WebSocketSession(object):
             self._send_queued = False
         self._do_submit()
 
+    def _remove_command(self, cmd, forget=True):
+        """
+        _remove_command(cmd, forget=True) -> None
+
+        Internal: Remove the given command from the various sending queues,
+        and from the ID-to-command index if forget is true.
+
+        Note that cmd is *not* entirely removed if it is in the *middle* of
+        a sending queue.
+        """
+        with self:
+            if forget:
+                self.commands.pop(cmd.id, None)
+            if self.queue and self.queue[0] is cmd:
+                self.queue.popleft()
+            elif self._early_queue and self._early_queue[0] is cmd:
+                self._early_queue.popleft()
+
+    def _cancel_command(self, cmd, is_on_scheduler=False):
+        """
+        _cancel_command(cmd, is_on_scheduler=False) -> None
+
+        Cancel the given command. is_on_scheduler tells whether the invocation
+        happens on the scheduler thread; this influences whether the command's
+        callback is invoked synchronously or not.
+
+        This transitions the command into the CANCELLED state, (partially)
+        removes references to it from internal indexes, and calls the
+        command's _on_cancelled() handler.
+        """
+        with self:
+            run_callback = (cmd.state != CST_CANCELLED)
+            cmd.state = CST_CANCELLED
+            self._remove_command(cmd)
+        if not run_callback:
+            pass
+        elif is_on_scheduler:
+            self._run_cb(cmd._on_cancelled)
+        else:
+            self._run_cb_async(cmd._on_cancelled)
+
     def _do_submit(self):
         """
         _do_submit() -> None
@@ -1477,10 +1476,8 @@ class WebSocketSession(object):
             while 1:
                 if not queue: return
                 cmd = queue[0]
-                if cmd.state == CST_CANCELLED:
-                    queue.popleft()
-                else:
-                    break
+                if cmd.state != CST_CANCELLED: break
+                queue.popleft()
             self._send_queued = True
         try:
             data = cmd.serialize()
