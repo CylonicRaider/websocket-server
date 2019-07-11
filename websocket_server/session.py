@@ -13,11 +13,12 @@ Event handling note: Some classes in this module allow their users to install
 callbacks for certain "events" by setting instance attributes. An event EVT
 is handled by a method called _on_EVT(); the latter invokes an instance
 attribute called on_EVT (without a leading underscore) unless the latter is
-None. The externally specified handler receives the same arguments as the
+None. The externally specified callback receives the same arguments as the
 method (aside from "self"). When overriding the event handler method, it is
 strongly advisable to invoke the parent class' method (unless noted
 otherwise). Each class lists the names of events for which this convention
-applies.
+applies, and allows setting them by specifying same-named keyword-only
+constructor arguments.
 
 This module is untested; expect bugs.
 """
@@ -114,12 +115,14 @@ def backoff_exponential(n):
 
 class ReconnectingWebSocket(object):
     """
-    ReconnectingWebSocket(url, protos=None, cookies=None) -> new instance
+    ReconnectingWebSocket(url, protos=None, cookies=None, on_*=None)
+        -> new instance
 
     An automatically reconnecting WebSocket wrapper. url is the WebSocket
     URL to connect to. protos is an indication on which WebSocket subprotocols
     may be used. cookies is a cookies.CookieJar instance that is used to
-    store/retrieve cookies, or None for no cookie management.
+    store/retrieve cookies, or None for no cookie management. on_* allow
+    setting event handler callbacks; see below.
 
     Instance attributes are:
     url    : The URL to connect to. Initialized from the same-named
@@ -218,9 +221,11 @@ class ReconnectingWebSocket(object):
 
     USE_WTHREAD = True
 
-    def __init__(self, url, protos=None, cookies=None):
+    def __init__(self, url, protos=None, cookies=None, on_connecting=None,
+                 on_connected=None, on_message=None, on_disconnecting=None,
+                 on_disconnected=None, on_error=None):
         """
-        __init__(url, protos=None, cookies=None) -> None
+        __init__(url, protos=None, cookies=None, on_*=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
@@ -228,12 +233,12 @@ class ReconnectingWebSocket(object):
         self.protos = protos
         self.cookies = cookies
         self.backoff = backoff_linear
-        self.on_connecting = None
-        self.on_connected = None
-        self.on_message = None
-        self.on_disconnecting = None
-        self.on_disconnected = None
-        self.on_error = None
+        self.on_connecting = on_connecting
+        self.on_connected = on_connected
+        self.on_message = on_message
+        self.on_disconnecting = on_disconnecting
+        self.on_disconnected = on_disconnected
+        self.on_error = on_error
         self.state = RWST_IDLE
         self.state_goal = RWST_DISCONNECTED
         self.conn = None
@@ -789,13 +794,14 @@ class ReconnectingWebSocket(object):
 
 class WebSocketSession(object):
     """
-    WebSocketSession(conn, scheduler=None) -> new instance
+    WebSocketSession(conn, scheduler=None, on_*) -> new instance
 
     A wrapper around a ReconnectingWebSocket providing high-level message
     submission and reception facilities. conn is a ReconnectingWebSocket (or
     an instance of a subclass, which could theoretically employ an entirely
     different transport) providing low-level message handling. scheduler is a
-    Scheduler instance that event handlers are executed by.
+    Scheduler instance that event handlers are executed by. on_* allow setting
+    event handler callbacks; see below.
 
     Messages sent into the WebSocket are called "commands" and are represented
     by the nested Command class; messages received from the WebSocket are
@@ -855,11 +861,13 @@ class WebSocketSession(object):
 
     class Command(object):
         """
-        Command(data, id=None, responses=0, resendable=False) -> new instance
+        Command(data, id=None, responses=0, resendable=False, on_*=None)
+            -> new instance
 
         A message sent from a WebSocketSession. data is the payload of the
         command; id is an identifier of the command (for recognizing
         responses); responses is the amount of responses the command expects.
+        on_* allow setting event handler callbacks; see below.
 
         Instance attributes (all initialized from the corresponding
         constructor parameters, if those exist) are:
@@ -932,9 +940,11 @@ class WebSocketSession(object):
         and suppressed.
         """
 
-        def __init__(self, data, id=None, responses=0, resendable=False):
+        def __init__(self, data, id=None, responses=0, resendable=False,
+                     on_response=None, on_cancelled=None):
             """
-            __init__(data, id=None, responses=0, resendable=False) -> None
+            __init__(data, id=None, responses=0, resendable=False, on_*)
+                -> None
 
             Instance initializer; see the class docstring for details.
             """
@@ -942,8 +952,8 @@ class WebSocketSession(object):
             self.id = id
             self.responses = responses
             self.resendable = resendable
-            self.on_response = None
-            self.on_cancelled = None
+            self.on_response = on_response
+            self.on_cancelled = on_cancelled
             self.state = CST_NEW
 
         def serialize(self):
@@ -1115,9 +1125,11 @@ class WebSocketSession(object):
         if conn_cls is None: conn_cls = ReconnectingWebSocket
         return cls(conn_cls(url, protos, cookies=cookies), **kwds)
 
-    def __init__(self, conn, scheduler=None):
+    def __init__(self, conn, scheduler=None, on_connected=None,
+                 on_logged_in=None, on_event=None, on_disconnecting=None,
+                 on_error=None):
         """
-        __init__(conn, scheduler=None) -> None
+        __init__(conn, scheduler=None, on_*=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
@@ -1125,11 +1137,11 @@ class WebSocketSession(object):
         self.conn = conn
         self.scheduler = scheduler
         self.state = SST_DISCONNECTED
-        self.on_connected = None
-        self.on_logged_in = None
-        self.on_event = None
-        self.on_disconnecting = None
-        self.on_error = None
+        self.on_connected = on_connected
+        self.on_logged_in = on_logged_in
+        self.on_event = on_event
+        self.on_disconnecting = on_disconnecting
+        self.on_error = on_error
         self.commands = collections.OrderedDict()
         self.queue = collections.deque()
         self._lock = threading.RLock()
