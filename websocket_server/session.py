@@ -817,6 +817,11 @@ class WebSocketSession(object):
                still-live commands.
     queue    : A collections.deque of Command-s pending being sent.
 
+    Class attributes (overridable on subclasses) are:
+    Connection: The default class for the enclosed connection manager.
+                Defaults to ReconnectingWebSocket and should be a subclass of
+                that (or something with a compatible interface).
+
     Multiple background threads are involved in maintaining a
     WebSocketSession: The underlying ReconnectingWebSocket contributes one
     or two (see that class' documentation for more details); WebSocketSession
@@ -858,6 +863,8 @@ class WebSocketSession(object):
     # Synchronization note: WebSocketSession's lock comes outside the
     # Scheduler's lock. Remark that the Scheduler never invokes callbacks with
     # its own lock held.
+
+    Connection = ReconnectingWebSocket
 
     class Command(object):
         """
@@ -1111,19 +1118,16 @@ class WebSocketSession(object):
     @classmethod
     def create(cls, url, protos=None, cookies=None, **kwds):
         """
-        create(url, protos=None, cookies=None, conn_cls=None, **kwds)
-            -> new instance
+        create(url, protos=None, cookies=None, **kwds) -> new instance
 
         Create a new WebSocketSession along with a new enclosed
         ReconnectingWebSocket. url, protos, and cookies are forwarded to the
-        ReconnectingWebSocket constructor; conn_cls (keyword-only, defaulting
-        to ReconnectingWebSocket) defines the class to instantiate as the
-        underlying connection; other keyword arguments are forwarded to the
-        WebSocketSession constructor.
+        ReconnectingWebSocket constructor; other keyword arguments are
+        forwarded to the WebSocketSession constructor. The actually
+        instantiated "nested" class is defined by the "Connection" class
+        attribute; unless overridden, it defaults to ReconnectingWebSocket.
         """
-        conn_cls = kwds.pop('conn_cls', None)
-        if conn_cls is None: conn_cls = ReconnectingWebSocket
-        return cls(conn_cls(url, protos, cookies=cookies), **kwds)
+        return cls(cls.Connection(url, protos, cookies=cookies), **kwds)
 
     def __init__(self, conn, scheduler=None, on_connected=None,
                  on_logged_in=None, on_event=None, on_disconnecting=None,
