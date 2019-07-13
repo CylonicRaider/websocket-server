@@ -5,15 +5,15 @@
 Example usage of the package.
 
 To run:
-- python3 -m websocket_server.examples
+- python3 -m websocket_server.examples.server
 - Open http://localhost:8080/ in your WebSocket-enabled Web browser.
 """
 
 import pkgutil
 
-from .exceptions import ProtocolError
-from .httpserver import RouteSet, HTTPError # FileCache not used for now
-from .quick import RoutingWebSocketRequestHandler, run
+from ..exceptions import ProtocolError
+from ..httpserver import RouteSet, HTTPError # FileCache not used for now
+from ..quick import RoutingWebSocketRequestHandler, run
 
 route = RouteSet()
 

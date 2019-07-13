@@ -11,9 +11,9 @@ parameters, POSTed HTML forms, request routing, and richer HTTP logs than
 the standard library provides. WebSocket client functionality is provided as
 well.
 
-For an example usage, see the examples module; for reference documentation,
-see the wsfile, server, httpserver, and client modules; also see the quick
-module for further convenience functions.
+For an example usage, see the examples subpackage; for reference
+documentation, see the wsfile, cookies, httpserver, server, and client
+modules; also see the quick module for further convenience functions.
 """
 
 __version__ = '2.0'
@@ -21,9 +21,9 @@ __version__ = '2.0'
 # Auxiliary modules
 from . import compat, constants, exceptions, tools
 # Main modules
-from . import wsfile, cookies, httpserver, client, server, session
+from . import wsfile, cookies, httpserver, server, client, session
 # Helper modules
-from . import quick, examples
+from . import quick
 
 __all__ = constants.__all__ + exceptions.__all__
 __all__ += ['WebSocketFile', 'wrap', 'connect', 'WebSocketRequestHandler']
