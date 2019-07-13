@@ -19,28 +19,34 @@ class RoutingWebSocketRequestHandler(RoutingRequestHandler, WebSocketMixIn):
     An HTTP request handler combining all the package's functionality.
     """
 
-def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
+def run(handler, server=ThreadingHTTPServer, prepare=None, postparse=None,
+        premain=None):
     """
-    run(handler, server=ThreadingHTTPServer, prepare=None, premain=None)
-        -> None
+    run(handler, server=ThreadingHTTPServer, prepare=None, postparse=None,
+        premain=None) -> None
 
     Actually run a WebSocket server instance.
-    handler is the handler class to use.
-    server  is a callable taking two arguments that creates the server
-            instance; the arguments are:
-            bindaddr: A (host, port) tuple containing the address to bind
-                      to. Constructed from command-line arguments.
-            handler : The request handler. Passed through from the same-
-                      named argument of run().
-    prepare is a callable that is invoked with the ArgumentParser (from
-            argparse) instance used to parse options as the only argument.
-            Can be used to specify additional options.
-    premain is called immediately before entering the main loop of the
-            internally created server object with two arguments:
-            httpd    : The server object created; an instance of server.
-            arguments: The arguments as returned by argparse.ArgumentParser.
-            It can be used to pass on the values of the options configured
-            using prepare to the server object and the handler class.
+    handler   is the handler class to use.
+    server    is a callable taking two arguments that creates the server
+              instance; the arguments are:
+              bindaddr: A (host, port) tuple containing the address to bind
+                        to. Constructed from command-line arguments.
+              handler : The request handler. Passed through from the same-
+                        named argument of run().
+    prepare   is a callable that is invoked with the ArgumentParser (from
+              argparse) instance used to parse options as the only argument.
+              Can be used to specify additional options.
+    postparse is a callable invoked after parsing arguments (and resolving
+              complex default values) with the resulting arguments object as
+              the only positional argument. It can do things like complex
+              validation, and prevent the creation and running of a server by
+              raising an exception.
+    premain   is called immediately before entering the main loop of the
+              internally created server object with two arguments:
+              httpd    : The server object created; an instance of server.
+              arguments: The arguments as returned by argparse.ArgumentParser.
+              It can be used to pass on the values of the options configured
+              using prepare to the server object and the handler class.
     """
     # Named function for better argparse output.
     def origin(s): return validate_origin(s)
@@ -58,7 +64,7 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
                        'an attempt is made to guess the value from the '
                        '--host and --port parameters; if that fails, this '
                        'remains unset.')
-    # Call preparation callback
+    # Call preparation callback.
     if prepare: prepare(p)
     # Actually parse arguments.
     arguments = p.parse_args()
@@ -70,6 +76,8 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
     else:
         if arguments.host is None: arguments.host = ''
         if arguments.port is None: arguments.port = 8080
+    # Call next preparation callback.
+    if postparse: postparse(arguments)
     # Create server.
     httpd = server((arguments.host, arguments.port), handler)
     if arguments.origin: httpd.origin = arguments.origin
@@ -84,7 +92,7 @@ def run(handler, server=ThreadingHTTPServer, prepare=None, premain=None):
     sys.stderr.write('Serving HTTP on %s (origin %s)...\n' % (address,
                                                               origin_string))
     sys.stderr.flush()
-    # Call second preparation hook
+    # Call final preparation hook.
     if premain: premain(httpd, arguments)
     # Run it.
     try:
