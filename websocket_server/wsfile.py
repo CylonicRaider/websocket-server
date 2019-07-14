@@ -502,7 +502,7 @@ class WebSocketFile(object):
 
     def read_frame(self, stream=False):
         """
-        read_frame(stream=False) -> (msgtype, data, final) or None
+        read_frame(stream=False) -> (msgtype, content, final) or None
 
         Read a WebSocket data frame.
         The return value is composed from fields of the same meaning as

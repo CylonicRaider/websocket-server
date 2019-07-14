@@ -2,7 +2,7 @@
 # https://github.com/CylonicRaider/websocket-server
 
 """
-Example usage of the package.
+Example usage of the WebSocket (and HTTP) server functionality.
 
 To run:
 - python3 -m websocket_server.examples.server
