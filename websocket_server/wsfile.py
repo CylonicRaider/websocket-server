@@ -400,13 +400,16 @@ class WebSocketFile(object):
         invalid, is truncated, an invalid (non-)continuation frame is
         read, EOF inside an unfinished fragmented frame is encountered,
         etc.
+        WARNING: If a control frame is received (i.e. whose opcode
+                 bitwise-AND OPMASK_CONTROL is nonzero), it must be
+                 passed into the handle_control() method; otherwise.
+                 the implementation may misbehave.
         """
         with self._rdlock:
             # Store for later.
             was_read_close = self._read_close
             # No more reading after close.
-            if was_read_close:
-                return None
+            if was_read_close: return None
             # Read opcode byte. A EOF here is non-fatal.
             header = bytearray(2)
             try:
@@ -779,7 +782,7 @@ class WebSocketFile(object):
         # Wait for close if desired.
         if wait:
             with self._rdlock:
-                while self.read_single_frame(): pass
+                while self.read_frame(True): pass
             self.close_ex(wait=False)
 
     def close(self, message=None, wait=True):
