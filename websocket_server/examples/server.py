@@ -109,7 +109,7 @@ def handle_chat(self):
 @route('/')
 def route_root(self):
     "Serve a static page at the root."
-    page = pkgutil.get_data(__package__, 'testpage.html')
+    page = pkgutil.get_data(__package__, 'index.html')
     self.send_text(200, page, 'text/html; charset=utf-8')
 
 def main():
