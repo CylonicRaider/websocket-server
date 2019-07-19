@@ -4,7 +4,7 @@
     <meta charset="utf-8"/>
     <title>WebSocket test page</title>
     <style type="text/css">
-/* Centered block with the output and the input area. */
+/* Centered block with the output and input areas. */
 body {
   text-align: center;
 }
@@ -35,15 +35,25 @@ textarea, input[type=text], #prompt {
     </style>
     <script type="text/javascript">
 // Status variables.
-var ws = null, input, output, echoMode;
+var ws = null, input, output, echoMode, chatMode;
 // Initialization.
 function init() {
-  // Initialize input and output.
+  // Initialize UI.
   input = document.getElementById("input");
   output = document.getElementById("output");
-  echoMode = document.querySelector("input[type=radio][value=echo]");
+  echoMode = document.querySelector("#mode-selector input[value=echo]");
+  chatMode = document.querySelector("#mode-selector input[value=chat]");
   input.focus();
   output.value = ""; // Clear output area in case it isn't empty.
+  // Pre-set connection mode.
+  var m = /[?&]mode=([^&]+)(&|$)/.exec(location.search);
+  if (m) {
+    switch (m[1]) {
+      case "echo": echoMode.checked = true; break;
+      case "chat": chatMode.checked = true; break;
+      default: console.warn("Unrecognized mode", m[1]);
+    }
+  }
   // Connect the WebSocket.
   connect();
 }
@@ -100,9 +110,11 @@ function println(msg) {
       <!-- Heading -->
       <h1>WebSocket test page</h1>
       <!-- Selector for what endpoint connect to -->
-      <input type="radio" name="mode" value="echo" checked="checked"/> Echo
-      <input type="radio" name="mode" value="chat"/> Chat
-      <input type="button" onclick="connect()" value="Reconnect"/>
+      <div id="mode-selector">
+        <input type="radio" name="mode" value="echo" checked="checked"/> Echo
+        <input type="radio" name="mode" value="chat"/> Chat
+        <input type="button" onclick="connect()" value="Reconnect"/>
+      </div>
       <!-- Output area -->
       <textarea id="output" rows="25" cols="80"
         readonly="readonly"></textarea>
