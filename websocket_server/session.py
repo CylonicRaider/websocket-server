@@ -29,6 +29,7 @@ import uuid
 import threading
 
 from . import client
+from .constants import OP_TEXT, OP_BINARY
 from .exceptions import ProtocolError, ConnectionClosedError
 from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 
@@ -60,13 +61,14 @@ CST_SEND_FAILED = 'SEND_FAILED' # Sending the command failed.
 CST_CONFIRMED   = 'CONFIRMED'   # Command has been responded to.
 CST_CANCELLED   = 'CANCELLED'   # Command has been cancelled.
 
-ERRS_RTHREAD    = 'rthread'   # Fatal uncaught error in reader thread.
-ERRS_WS_CONNECT = 'connect'   # Exception raised while connecting.
-ERRS_WS_RECV    = 'ws_recv'   # Exception raised while reading from WS.
-ERRS_WS_SEND    = 'ws_send'   # Exception while writing to or closing WS.
-ERRS_SCHEDULER  = 'scheduler' # Uncaught error in Scheduler task.
-ERRS_SERIALIZE  = 'serialize' # Error while trying to serialize a Command.
-ERRS_CALLBACK   = 'callback'  # Uncaught error in event handler callback.
+ERRS_RTHREAD     = 'rthread'     # Fatal uncaught error in reader thread.
+ERRS_WS_CONNECT  = 'ws_connect'  # Exception raised while connecting.
+ERRS_WS_RECV     = 'ws_recv'     # Exception raised while reading from WS.
+ERRS_WS_SEND     = 'ws_send'     # Exception while writing to or closing WS.
+ERRS_SCHEDULER   = 'scheduler'   # Uncaught error in Scheduler task.
+ERRS_SERIALIZE   = 'serialize'   # Error while serializing a Command.
+ERRS_DESERIALIZE = 'deserialize' # Error while deserializing an Event.
+ERRS_CALLBACK    = 'callback'    # Uncaught error in event handler callback.
 
 SWALLOW_CLASSES_CONNECT = (IOError, ProtocolError)
 SWALLOW_CLASSES_RECV    = (IOError,)
@@ -1085,12 +1087,29 @@ class WebSocketSession(object):
         Instance attributes (all initialized from the corresponding
         constructor parameters) are:
         data  : The payload of the event as an arbitrary application-specific
-                object. See also the deserialize() method.
+                object. See also the deserialize() class method.
         connid: The ID of the connection the event was received from.
         id    : An identifier relating this event to some command. None is
                 special-cased to mean that this event cannot be identified.
                 See also the Command class for more details on reply matching.
         """
+
+        @classmethod
+        def deserialize_msg(cls, msg, connid):
+            """
+            deserialize_msg(msg, connid) -> new instance
+
+            Convert the given WebSocket message (which may have been
+            reassembled from multiple frames and is represented by a
+            wsfile.Message instance) into an internal format.
+
+            The default method validates the type of the message and forwards
+            its contents to the deserialize() class method.
+            """
+            if msg.msgtype not in (OP_TEXT, OP_BINARY):
+                raise ValueError('Unrecognized WebSocket message type %r in '
+                    'Event deserialization' % (msg.msgtype,))
+            return cls.deserialize(msg.content, connid)
 
         @classmethod
         def deserialize(cls, data, connid):
@@ -1101,7 +1120,8 @@ class WebSocketSession(object):
             format into an internal format.
 
             The default implementation returns an instance with data
-            unchanged, connid passed on, and an id of None.
+            unchanged, connid passed on, and an id of None. See also the
+            deserialize_msg() class method for a more low-level routine.
             """
             return cls(data, connid)
 
@@ -1306,7 +1326,11 @@ class WebSocketSession(object):
         is no such command), and garbage-collects the dispatched-to command
         (if any and as necessary).
         """
-        evt = self.Event.deserialize(msg, connid)
+        try:
+            evt = self.Event.deserialize_msg(msg, connid)
+        except Exception as exc:
+            self._on_error(exc, ERRS_DESERIALIZE, True)
+            return
         with self:
             cmd = self.commands.get(evt.id)
             # A send that looks like it failed to us (thus CST_SEND_FAILED)
@@ -1315,7 +1339,7 @@ class WebSocketSession(object):
             if cmd is not None and cmd.state in (CST_NEW, CST_SENDING,
                                                  CST_SENT, CST_SEND_FAILED):
                 cmd.state = CST_CONFIRMED
-        handler = self._on_event if cmd is not None else cmd._on_response
+        handler = self._on_event if cmd is None else cmd._on_response
         self._run_cb(handler, evt)
         with self:
             if cmd is not None and cmd.responses is not None:
