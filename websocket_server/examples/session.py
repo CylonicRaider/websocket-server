@@ -10,7 +10,7 @@ To run:
   is "ws://localhost:8080/chat" (if the server example is using the default
   settings);
 - Visit <http://localhost:8080/?mode=chat> in your WebSocket-enabled browser,
-  type "!echo something" into the input box, and press Return (NYI).
+  type "!echo something" into the input box, and press Return.
 """
 
 import argparse
@@ -22,11 +22,23 @@ def run_bot(url):
     Connect to the given WebSocket URL and respond to certain messages
     received from the connection.
     """
-    sess = session.WebSocketSession.create(url)
+    def on_event(evt):
+        """
+        Event handler; tests whether the message starts with "!echo " and
+        responds with its remainder if so.
+        """
+        text = evt.data
+        print ('Got message: %r' % (text,))
+        if not (isinstance(text, str) and text.startswith('!echo ') and
+                len(text) > 6):
+            return
+        sess.submit(sess.Command(text[6:]))
+    sess = session.WebSocketSession.create(url, on_event=on_event)
     sess.connect(wait=False)
     try:
         sess.scheduler.join()
     except KeyboardInterrupt:
+        print ('')
         sess.close()
         sess.scheduler.join()
 
