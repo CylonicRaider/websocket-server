@@ -39,7 +39,7 @@ def run_client(url):
 
 def main():
     """
-    Run the example. Uses the connect() function from the client module.
+    Run the example. See run_client() for the actual content.
     """
     p = argparse.ArgumentParser()
     p.add_argument('url', help='The WebSocket URL to connect to')
