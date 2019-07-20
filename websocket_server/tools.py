@@ -975,8 +975,6 @@ class Scheduler(object):
                         now = self.time()
                     if self._references <= 0: break
                     head = heapq.heappop(self.queue)
-                    if head.cancelled: continue
-                    head.started = True
                 head.run()
         finally:
             with self.cond:
