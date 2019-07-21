@@ -569,7 +569,7 @@ class ReconnectingWebSocket(object):
             else:
                 conn.write_text_frame(data)
         finally:
-            ok = (sys.exc_info()[0] is not None)
+            ok = (sys.exc_info()[0] is None)
             if after_cb is not None:
                 after_cb(ok)
 
@@ -591,29 +591,28 @@ class ReconnectingWebSocket(object):
 
     def _run_wthread(self, cb, check_state=None):
         """
-        _run_wthread(cb, check_state=None) -> Future or None
+        _run_wthread(cb, check_state=None) -> bool
 
-        Schedule the given callback to be executed in the writer thread. cb
+        Schedule the given callback to be executed on the writer thread. cb
         is the callback to run. check_state, if not None, indicates that only
         the given state may be in effect while submitting the callback; if the
-        state does not match, None is returned and cb is not run. Otherwise,
-        this returns a Future wrapping the return value of the callback.
+        state does not match, cb is not run. Returns True if the state check
+        passed, or False otherwise.
 
         If there is no writer thread (but check_state is satisfied), cb is
         executed synchronously. If there *is* a writer thread, note that
         queued calls may be silently discarded in the event of a sudden
         disconnect.
         """
-        ret = Future(cb)
         with self:
             if check_state is not None and self.state != check_state:
-                return None
+                return False
             queue = self._wqueue
             if queue is not None:
-                queue.put(ret.run)
+                queue.put(cb)
         if queue is None:
-            ret.run()
-        return ret
+            cb()
+        return True
 
     def _on_connecting(self, initial):
         """
@@ -706,17 +705,16 @@ class ReconnectingWebSocket(object):
 
     def send_message(self, data, before_cb=None, after_cb=None):
         """
-        send_message(data, before_cb=None, after_cb=None) -> Future
+        send_message(data, before_cb=None, after_cb=None) -> None
 
         Send a WebSocket frame containing the given data. The type of frame is
         chosen automatically depending on whether data is a byte or Unicode
-        string. The send might be asynchronous; this returns a Future that
-        resolves when it finishes (which may be immediately if the send was
-        not asynchronous). before_cb is invoked (if not None and with no
-        arguments) immediately before sending the message, after_cb (if not
-        None, and with a single Boolean argument that tells whether sending
-        the message was successful, i.e. whether there was *no* exception)
-        immediately after.
+        string. Depending on whether there is a dedicated background writer
+        thread, the send may or may not be asynchronous. before_cb is invoked
+        (if not None and with no arguments) immediately before sending the
+        message, after_cb (if not None, and with a single Boolean argument
+        that tells whether sending the message was successful, i.e. whether
+        there was *no* exception) immediately after.
 
         In order to send messages, this instance must be in the CONNECTED
         state; if it is not, a ConnectionClosedError is raised. If a writer
@@ -727,12 +725,11 @@ class ReconnectingWebSocket(object):
         actual sending might be delayed (after before_cb has already been
         called).
         """
-        ret = self._run_wthread(lambda: self._do_send(self.conn, data,
+        res = self._run_wthread(lambda: self._do_send(self.conn, data,
             before_cb, after_cb), RWST_CONNECTED)
-        if ret is None:
+        if not res:
             raise ConnectionClosedError('Cannot send to non-connected '
                 'ReconnectingWebSocket')
-        return ret
 
     def connect_async(self, url=None):
         """
