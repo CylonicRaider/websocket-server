@@ -196,8 +196,6 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
         ret.response = resp
         return ret
     except:
-        import traceback
-        traceback.print_exc()
         # Clean up connection
         for f in (conn, rdfile, wrfile):
             if not f: continue
