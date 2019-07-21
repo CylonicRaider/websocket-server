@@ -88,7 +88,7 @@ def handle_chat(self):
     "Accept a WebSocket connection and broadcast received messages."
     def callback(message):
         "Callback for the message relay."
-        conn.write_frame(message[0], message[1])
+        conn.write_frame(message.msgtype, message.content)
     try:
         conn = self.handshake()
     except ProtocolError:
