@@ -13,7 +13,9 @@ To run:
   type "!echo something" into the input box, and press Return.
 """
 
+import sys
 import argparse
+import traceback
 
 from .. import session
 
@@ -33,7 +35,16 @@ def run_bot(url):
                 len(text) > 6):
             return
         sess.submit(sess.Command(text[6:]))
-    sess = session.WebSocketSession.create(url, on_event=on_event)
+    def on_error(exc, source, swallow):
+        """
+        Error handler; prints a report to standard error.
+        """
+        buf = [('=== ERROR inside %s ' % source).ljust(80, '='), '\n',
+               traceback.format_exc(), '=' * 80, '\n']
+        sys.stderr.write(''.join(buf))
+        sys.stderr.flush()
+    sess = session.WebSocketSession.create(url, on_event=on_event,
+                                           on_error=on_error)
     sess.connect(wait=False)
     try:
         sess.scheduler.join()
