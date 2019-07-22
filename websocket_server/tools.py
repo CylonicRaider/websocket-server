@@ -1005,15 +1005,26 @@ class Scheduler(object):
         """
         return (spawn_daemon_thread if daemon else spawn_thread)(self.run)
 
-    def join(self):
+    def join(self, timeout=None):
         """
-        join() -> None
+        join(timeout=None) -> bool
 
-        Wait until a concurrent invocation of run() finishes.
+        Wait until a concurrent invocation of run() finishes or the given
+        timeout expires. timeout is the amount of time to wait (specified
+        using the same units as job delays); if it is None, this function
+        waits forever. Returns whether the timeout did *not* expire.
         """
         with self.cond:
-            while self._references > 0:
-                self.wait(None)
+            if timeout is not None:
+                deadline = self.time() + timeout
+                while self._references > 0:
+                    now = self.time()
+                    if now >= deadline: return False
+                    self.wait(deadline - now)
+            else:
+                while self._references > 0:
+                    self.wait(None)
+            return True
 
 class EOFQueue(object):
     """
