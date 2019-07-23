@@ -372,6 +372,24 @@ class AtomicSequence(object):
         self.counter = start
         self.lock = lock
 
+    def __iter__(self):
+        """
+        __iter__() -> self
+
+        Return this AtomicSequence. Together with __next__(), this method
+        allows an AtomicSequence to be used as an iterator.
+        """
+        # pylint: disable=non-iterator-returned
+        return self
+
+    def __next__(self):
+        """
+        __next__() -> int
+
+        Return the next value of the sequence; see __call__() for details.
+        """
+        return self()
+
     def __call__(self):
         """
         __call__() -> int
