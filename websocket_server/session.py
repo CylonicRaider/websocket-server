@@ -12,20 +12,21 @@ endpoint, retrying commands whose results may have been missed, etc.
 Event handling note: Some classes in this module allow their users to install
 callbacks for certain "events" by setting instance attributes. An event EVT
 is handled by a method called _on_EVT(); the latter invokes an instance
-attribute called on_EVT (without a leading underscore) unless the latter is
+attribute called on_EVT (without a leading underscore) unless the attribute is
 None. The externally specified callback receives the same arguments as the
 method (aside from "self"). When overriding the event handler method, it is
 strongly advisable to invoke the parent class' method (unless noted
 otherwise). Each class lists the names of events for which this convention
 applies, and allows setting them by specifying same-named keyword-only
-constructor arguments.
+constructor arguments; unless otherwise noted, the handler callbacks default
+to None.
 
 This module is untested; expect bugs.
 """
 
 import sys, time
-import collections
-import uuid
+import collections, uuid
+import traceback
 import threading
 
 from . import client
@@ -40,6 +41,7 @@ __all__ = ['RWST_IDLE', 'RWST_DISCONNECTED', 'RWST_CONNECTING',
            'CST_CONFIRMED', 'CST_CANCELLED',
            'ERRS_RTHREAD', 'ERRS_WS_CONNECT', 'ERRS_WS_RECV', 'ERRS_WS_SEND',
            'ERRS_SCHEDULER', 'ERRS_SERIALIZE', 'ERRS_CALLBACK',
+           'report_error',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
            'ReconnectingWebSocket', 'WebSocketSession']
 
@@ -82,6 +84,33 @@ def run_cb(_func, *_args, **_kwds):
     arguments; otherwise, do nothing and return None.
     """
     if _func is not None: return _func(*_args, **_kwds)
+
+def report_error(exc, source, swallow, output=None):
+    """
+    report_error(exc, source, swallow, output=None) -> None
+
+    Write a report about the given error to the given output stream. exc is
+    the exception being handled; source indicates the origin of the error
+    (in particular an ERRS_* constant); swallow indicates whether the report
+    should be short (swallow is true) or extensive (swallow is false); output
+    is a file-like object to write the report to, defaulting to standard error
+    if None.
+
+    This consults sys.exc_info() in order to retrieve a stack trace, but also
+    works if that is not available. In order to avoid interleaving, this
+    issues a single call to the output's write() method and one to its flush()
+    method.
+    """
+    if output is None: output = sys.stderr
+    buf = ['ERROR at %r:' % (source,)]
+    info = sys.exc_info()
+    if info[1] is not exc or swallow:
+        buf.append(' %r' % (exc,))
+    if info[1] is not None and not swallow:
+        buf.append('\n')
+        buf.extend(traceback.format_exception(*info))
+    output.write(''.join(buf))
+    output.flush()
 
 def backoff_constant(n):
     """
@@ -210,8 +239,11 @@ class ReconnectingWebSocket(object):
                    send messages, but responses might not arrive.
     disconnected : Emitted just after entering the DISCONNECTED state.
     error        : Emitted when an exception is caught. The exception's
-                   traceback etc. may be inspected by the callback. See also
-                   the error handling note below.
+                   traceback etc. may be inspected by the callback. The
+                   default is the module-level report_error() function, which
+                   writes a report to standard error; set this to None to
+                   ignore (swallowable) errors entirely. See also the error
+                   handling note below.
 
     Note that this is not a drop-in replacement for the WebSocketFile class.
 
@@ -225,7 +257,7 @@ class ReconnectingWebSocket(object):
 
     def __init__(self, url, protos=None, cookies=None, on_connecting=None,
                  on_connected=None, on_message=None, on_disconnecting=None,
-                 on_disconnected=None, on_error=None):
+                 on_disconnected=None, on_error=report_error):
         """
         __init__(url, protos=None, cookies=None, on_*=None) -> None
 
@@ -852,7 +884,10 @@ class WebSocketSession(object):
     disconnecting: The connection is being torn down. Differently to
                    ReconnectingWebSocket, commands may *not* be sent.
     error        : An exception occurred. The exception's traceback etc. may
-                   be inspected.
+                   be inspected. The default is the module-level
+                   report_error() function, which writes a report to standard
+                   error; set this to None to ignore (swallowable) errors
+                   entirely.
     All event handlers (except the "error" one, which must be called from the
     block that caught the exception) are executed on the Scheduler this
     instance references. Errors in event handlers are caught, forwarded to
@@ -1148,7 +1183,7 @@ class WebSocketSession(object):
 
     def __init__(self, conn, scheduler=None, on_connected=None,
                  on_logged_in=None, on_event=None, on_disconnecting=None,
-                 on_error=None):
+                 on_error=report_error):
         """
         __init__(conn, scheduler=None, on_*=None) -> None
 
