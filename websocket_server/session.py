@@ -34,13 +34,14 @@ from .constants import OP_TEXT, OP_BINARY
 from .exceptions import ProtocolError, ConnectionClosedError
 from .tools import spawn_daemon_thread, Scheduler, Future, EOFQueue
 
-__all__ = ['RWST_IDLE', 'RWST_DISCONNECTED', 'RWST_CONNECTING',
-           'RWST_CONNECTED', 'RWST_INTERRUPTED', 'RWST_DISCONNECTING',
+__all__ = ['RWST_IDLE', 'RWST_CONNECTING', 'RWST_CONNECTED',
+           'RWST_INTERRUPTED', 'RWST_DISCONNECTING', 'RWST_DISCONNECTED',
            'SST_DISCONNECTED', 'SST_LOGGING_IN', 'SST_CONNECTED',
            'CST_NEW', 'CST_SENDING', 'CST_SENT', 'CST_SEND_FAILED',
            'CST_CONFIRMED', 'CST_CANCELLED',
            'ERRS_RTHREAD', 'ERRS_WS_CONNECT', 'ERRS_WS_RECV', 'ERRS_WS_SEND',
-           'ERRS_SCHEDULER', 'ERRS_SERIALIZE', 'ERRS_CALLBACK',
+           'ERRS_SCHEDULER', 'ERRS_SERIALIZE', 'ERRS_DESERIALIZE',
+           'ERRS_CALLBACK',
            'report_error',
            'backoff_constant', 'backoff_linear', 'backoff_exponential',
            'ReconnectingWebSocket', 'WebSocketSession']
