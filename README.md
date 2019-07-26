@@ -5,8 +5,8 @@ WebSocket/HTTP server/client library for Python.
 ## Description
 
 This is a small stand-alone library for WebSocket servers/clients and generic
-HTTP servers. It extends Python's HTTP server framework, providing -- aside
-from WebSocket functionality -- convenient use of cookies, query string
+HTTP servers. It extends Python's HTTP server framework, providing — aside
+from WebSocket functionality — convenient use of cookies, query string
 parameters, POSTed HTML forms, request routing, and richer HTTP logs than
 the standard library provides. WebSocket client functionality is provided as
 well.
