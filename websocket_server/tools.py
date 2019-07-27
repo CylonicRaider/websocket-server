@@ -439,12 +439,17 @@ class Future(object):
     done_cbs : A list of callbacks to be run whenever this Future resolves.
                Each is given the value resolved to as the only positional
                argument. See also add_done_cb().
+    on_error : Callback function invoked when an unexpected exception is
+               raised. See _on_error() for details.
     """
 
     ST_PENDING   = 'PENDING'
     ST_COMPUTING = 'COMPUTING'
     ST_FAILED    = 'FAILED'
     ST_DONE      = 'DONE'
+
+    SRC_FAILURE  = 'FAILURE'
+    SRC_CALLBACK = 'CALLBACK'
 
     class Timeout(Exception):
         """
@@ -475,7 +480,46 @@ class Future(object):
         self.state = self.ST_PENDING
         self.error_cbs = []
         self.done_cbs = []
+        self.on_error = None
         self._cond = threading.Condition(lock)
+
+    def _on_error(self, exc, source):
+        """
+        _on_error(exc, source) -> None
+
+        Method invoked when an unexpected error occurs. exc is an object
+        detailing the error (e.g. an exception, or something the Future failed
+        with), source is a SRC_* constant indicating where the error
+        originated.
+
+        There are two distinct possible sources:
+        FAILURE : The Future failed to resolve, and there was no error
+                  handler callback (see add_error_cb) attached.
+        CALLBACK: A callback attached to the Future raised an exception.
+
+        The default implementation calls the the on_error instance attribute,
+        if is not None, with the same parameters as this method; otherwise, if
+        the source is a failed callback, the exception is re-raised.
+        """
+        if self.on_error is not None:
+            self.on_error(exc, source)
+        elif source == self.SRC_CALLBACK:
+            raise
+
+    def _run_callbacks(self, funcs, *args):
+        """
+        _run_callbacks(funcs, *args) -> None
+
+        Invoke every element of funcs and pass it the given positional
+        arguments.
+
+        Exceptions are passed into _on_error().
+        """
+        for func in funcs:
+            try:
+                func(*args)
+            except Exception as exc:
+                self._on_error(exc, self.SRC_CALLBACK)
 
     def _set(self, value, check_state, set_state):
         """
@@ -494,8 +538,7 @@ class Future(object):
             self.done_cbs = None
             self.error_cbs = None
             self._cond.notifyAll()
-        for cb in callbacks:
-            cb(value)
+        self._run_callbacks(callbacks, value)
         return True
 
     def _fail(self, exc, check_state):
@@ -515,8 +558,9 @@ class Future(object):
             callbacks = tuple(self.error_cbs)
             self.error_cbs = None
             self._cond.notifyAll()
-        for cb in callbacks:
-            cb(exc)
+        if not callbacks:
+            self._on_error(exc, self.SRC_FAILURE)
+        self._run_callbacks(callbacks, exc)
         if not self._set(None, self.ST_FAILED, self.ST_FAILED):
             raise AssertionError('Future experienced an invalid state '
                 'transition')
@@ -759,6 +803,13 @@ class Scheduler(object):
         def __ge__(self, other): return self._key >= other._key
         def __gt__(self, other): return self._key >  other._key
 
+        def _on_error(self, exc, source):
+            "Internal method override; see Future for details."
+            if self.on_error is not None:
+                self.on_error(exc, source)
+            elif source == self.SRC_CALLBACK:
+                self.parent._on_error(exc)
+
         def _set(self, *args):
             "Internal method override; see Future for details."
             ret = Future._set(self, *args)
@@ -768,12 +819,6 @@ class Scheduler(object):
                         self._referencing = False
                         self.parent._references -= 1
                         self.parent.cond.notifyAll()
-            return ret
-
-        def _fail(self, exc, *args):
-            "Internal method override; see Future for details."
-            ret = Future._fail(self, exc, *args)
-            self.parent._on_error(exc)
             return ret
 
     class Hold(object):
