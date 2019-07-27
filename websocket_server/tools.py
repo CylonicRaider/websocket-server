@@ -502,6 +502,7 @@ class Future(object):
         the source is a failed callback, the exception is re-raised.
         """
         if self.on_error is not None:
+            # pylint: disable=not-callable
             self.on_error(exc, source)
         elif source == self.SRC_CALLBACK:
             raise
@@ -806,6 +807,7 @@ class Scheduler(object):
         def _on_error(self, exc, source):
             "Internal method override; see Future for details."
             if self.on_error is not None:
+                # pylint: disable=not-callable
                 self.on_error(exc, source)
             elif source == self.SRC_CALLBACK:
                 self.parent._on_error(exc)
