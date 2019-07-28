@@ -418,8 +418,9 @@ class Future(object):
 
     The Future can be *resolved* to a value by either invoking the stored
     callback (if any) via run() or explicitly setting the value via set().
-    Alternatively, the Future can *fail* to resolve when the callback raises
-    an exception or cancel() is called.
+    Alternatively, the Future can "*fail* to resolve" when the callback raises
+    an exception or cancel() is called; remark, however, that the Future
+    resolves "regularly" to a value of None immediately after that.
 
     Read-only instance attributes are:
     cb       : The callback producing this Future's value (if any).
@@ -439,8 +440,17 @@ class Future(object):
     done_cbs : A list of callbacks to be run whenever this Future resolves.
                Each is given the value resolved to as the only positional
                argument. See also add_done_cb().
-    on_error : Callback function invoked when an unexpected exception is
-               raised. See _on_error() for details.
+
+    Error handling note: Multiple methods of this class (namely those that can
+    lead to the Future resolving) take an "on_error" argument (for forwards
+    compatibility, pass it as a keyword argument); if not None, it is called
+    by internal code whenever an unexpected error happens. It may choose to
+    propagate the information elsewhere, bail out by reraising an exception,
+    or suppress the error. The callback takes two (positional) arguments:
+    exc   : An exception object indicating the nature of the error.
+    source: A SRC_* constant indicating where the error originated.
+    Additionally, the callback may inspect sys.exc_info(). See also the
+    _on_error() method for more details.
     """
 
     ST_PENDING   = 'PENDING'
@@ -450,6 +460,29 @@ class Future(object):
 
     SRC_FAILURE  = 'FAILURE'
     SRC_CALLBACK = 'CALLBACK'
+
+    class Failure(Exception):
+        """
+        An exception enclosing a failed Future's "failure value".
+
+        The failure value can be an exception (if the Future executed a
+        callback) or None (if the Future has been cancelled). In order to
+        provide a uniform interface, those are packaged into this exception
+        in the generic error handling code.
+
+        The failure value is stored in the "value" instance attribute; it
+        can be set via the same-named only argument of the constructor.
+        """
+
+        def __init__(self, value):
+            """
+            __init__(value) -> None
+
+            Initialize a Failure exception. value is stored as the same-named
+            instance attribute and passed on to the parent class' constructor.
+            """
+            Exception.__init__(self, value)
+            self.value = value
 
     class Timeout(Exception):
         """
@@ -480,55 +513,64 @@ class Future(object):
         self.state = self.ST_PENDING
         self.error_cbs = []
         self.done_cbs = []
-        self.on_error = None
         self._cond = threading.Condition(lock)
 
-    def _on_error(self, exc, source):
+    def _on_error(self, exc, source, handler):
         """
-        _on_error(exc, source) -> None
+        _on_error(exc, source, handler) -> None
 
-        Method invoked when an unexpected error occurs. exc is an object
-        detailing the error (e.g. an exception, or something the Future failed
-        with), source is a SRC_* constant indicating where the error
-        originated.
+        Method invoked when an unexpected error occurs. exc is an exception
+        detailing the error; source is a SRC_* constant indicating where the
+        error originated; handler is a callable to pass the error on to or
+        None.
 
         There are two distinct possible sources:
         FAILURE : The Future failed to resolve, and there was no error
-                  handler callback (see add_error_cb) attached.
+                  handler callback (see add_error_cb()) attached. exc is an
+                  instance of the Failure exception enclosing the "failure
+                  value" (whatever that may be) and synthesized in the code
+                  invoking this method.
         CALLBACK: A callback attached to the Future raised an exception.
+        In all cases, sys.exc_info() may be inspected to gain more information
+        about the error.
 
-        The default implementation calls the the on_error instance attribute,
-        if is not None, with the same parameters as this method; otherwise, if
-        the source is a failed callback, the exception is re-raised.
+        Exceptions raised in the callback are not handled in any special way,
+        and the callback is expected to guard against them.
+
+        The default implementation calls the the handler argument, if is not
+        None, with the same parameters as this method (minus handler itself);
+        otherwise, the exception is re-raised in order to ensure errors do not
+        go unnoticed as default.
         """
-        if self.on_error is not None:
-            # pylint: disable=not-callable
-            self.on_error(exc, source)
-        elif source == self.SRC_CALLBACK:
+        if handler is not None:
+            handler(exc, source)
+        else:
             raise
 
-    def _run_callbacks(self, funcs, *args):
+    def _run_callbacks(self, funcs, args, on_error):
         """
-        _run_callbacks(funcs, *args) -> None
+        _run_callbacks(funcs, args, on_error) -> None
 
         Invoke every element of funcs and pass it the given positional
-        arguments.
+        arguments, potentially invoking on_error if exceptions are raised.
 
-        Exceptions are passed into _on_error().
+        See _on_error() for error handling details; this method passes
+        SRC_CALLBACK as the error source.
         """
         for func in funcs:
             try:
                 func(*args)
             except Exception as exc:
-                self._on_error(exc, self.SRC_CALLBACK)
+                self._on_error(exc, self.SRC_CALLBACK, on_error)
 
-    def _set(self, value, check_state, set_state):
+    def _set(self, value, check_state, set_state, on_error):
         """
-        _set(value, check_state, set_state) -> bool
+        _set(value, check_state, set_state, on_error) -> bool
 
         Internal: Test whether the state matches check_state; if it does, set
         the state to set_state, the instance's value to the given value, and
-        run on-done callbacks. Returns whether the assignment succeeded (i.e.
+        run on-done callbacks. on_error is an error handler; see the class
+        docstring for details. Returns whether the assignment succeeded (i.e.
         the state matched).
         """
         with self._cond:
@@ -539,18 +581,21 @@ class Future(object):
             self.done_cbs = None
             self.error_cbs = None
             self._cond.notifyAll()
-        self._run_callbacks(callbacks, value)
+        self._run_callbacks(callbacks, (value,), on_error)
         return True
 
-    def _fail(self, exc, check_state):
+    def _fail(self, exc, check_state, on_error):
         """
-        _fail(exc, check_state) -> bool
+        _fail(exc, check_state, on_error) -> bool
 
         Internal: Test whether the state matches check_state; if it does, set
         the state to ST_FAILED, the instance's stored error to the given
-        value, invoke on-error callbacks, and resolve this instance to a
-        value of None. Returns whether the operation succeeded (i.e. if the
-        state matched).
+        value, invoke on-error callbacks (from the Future instance), and
+        resolve this instance to a value of None. on_error is a second-tier
+        error handler, invoked when there are no instance-level on-error
+        callbacks or any of them raises an exception; see the class docstring
+        for details (this passes a source of SRC_FAILURE). Returns whether the
+        operation succeeded (i.e. if the state matched).
         """
         with self._cond:
             if self.state != check_state: return False
@@ -560,19 +605,23 @@ class Future(object):
             self.error_cbs = None
             self._cond.notifyAll()
         if not callbacks:
-            self._on_error(exc, self.SRC_FAILURE)
-        self._run_callbacks(callbacks, exc)
-        if not self._set(None, self.ST_FAILED, self.ST_FAILED):
+            try:
+                raise self.Failure(exc)
+            except self.Failure as e:
+                self._on_error(e, self.SRC_FAILURE, on_error)
+        self._run_callbacks(callbacks, (exc,), on_error)
+        if not self._set(None, self.ST_FAILED, self.ST_FAILED, on_error):
             raise AssertionError('Future experienced an invalid state '
                 'transition')
         return True
 
-    def set(self, value=None):
+    def set(self, value=None, on_error=None):
         """
-        set(value=None) -> bool
+        set(value=None, on_error=None) -> bool
 
         Explicitly store an object in this Future. value is the value to
-        store. Returns whether setting the Future's value succeeded (i.e.
+        store. on_error is an error handler; see the class docstring for
+        details. Returns whether setting the Future's value succeeded (i.e.
         whether the value was not already there and there was no computation
         of the it running concurrently).
 
@@ -580,14 +629,15 @@ class Future(object):
         value to be computed; this allows using Future as a one-shot
         equivalent of the threading.Event class.
         """
-        return self._set(value, self.ST_PENDING, self.ST_DONE)
+        return self._set(value, self.ST_PENDING, self.ST_DONE, on_error)
 
-    def run(self):
+    def run(self, on_error=None):
         """
-        run() -> bool or Ellipsis
+        run(on_error=None) -> bool or Ellipsis
 
-        Compute the value wrapped by this Future if possible. Returns True
-        when the computation has finished, or the (truthy) Ellipsis if the
+        Compute the value wrapped by this Future if possible. on_error is an
+        error handler; see the class docstring for details. Returns True when
+        the computation has finished, or the (truthy) Ellipsis if the
         computation is going on concurrently, or False if there is no stored
         callback to run.
         """
@@ -602,27 +652,28 @@ class Future(object):
         try:
             v = self.cb()
         except Exception as exc:
-            if not self._fail(exc, self.ST_COMPUTING):
+            if not self._fail(exc, self.ST_COMPUTING, on_error):
                 raise AssertionError('Future has gotten into an invalid '
                     'state')
         else:
-            if not self._set(v, self.ST_COMPUTING, self.ST_DONE):
+            if not self._set(v, self.ST_COMPUTING, self.ST_DONE, on_error):
                 raise AssertionError('Future has gotten into an invalid '
                     'state')
         return True
 
-    def cancel(self):
+    def cancel(self, on_error=None):
         """
-        cancel() -> bool
+        cancel(on_error=None) -> bool
 
-        Cancel this Future's computation if it has not started yet. Returns
+        Cancel this Future's computation if it has not started yet. on_error
+        is an error handler; see the class docstring for details. Returns
         whether cancelling succeeded (i.e. whether the value has neither
         started being computed nor has been explicitly set).
 
         This is treated as if computing the value failed with an exception but
         that exception turned out to be None.
         """
-        return self._fail(None, self.ST_PENDING)
+        return self._fail(None, self.ST_PENDING, on_error)
 
     def get_state(self):
         """
@@ -645,9 +696,9 @@ class Future(object):
         with self._cond:
             return self.value if self.state == self.ST_DONE else default
 
-    def wait(self, timeout=None, run=False, default=None):
+    def wait(self, timeout=None, run=False, default=None, on_error=None):
         """
-        wait(timeout=None, run=False, default=None) -> object
+        wait(timeout=None, run=False, default=None, on_error=None) -> object
 
         Wait for the object of this Future to be computed and return it. If
         timeout is not None, it imposes a maximum time to wait for the value
@@ -656,9 +707,10 @@ class Future(object):
         true, this computes the value (in this thread) unless that is already
         happening elsewhere; if there is no stored callback, run is ignored.
         default specifies the value to return if the callback resolving the
-        Future failed with an exception.
+        Future failed with an exception. on_error is an error handler (only
+        used when run is true); see the class docstring for details.
 
-        It is an error to specify a non-None timeout and run=True; this class
+        It is an error to specify a non-None timeout and run=True; this method
         cannot guarantee that the computation will honor the timeout.
         """
         def get_value():
@@ -681,22 +733,25 @@ class Future(object):
                 return get_value()
         if timeout is not None:
             raise ValueError('Cannot honor timeout while computing value')
-        self.run()
+        self.run(on_error)
         with self._cond:
             while self.state not in (self.ST_DONE, self.ST_FAILED):
                 self._cond.wait()
             return get_value()
 
-    def add_error_cb(self, cb):
+    def add_error_cb(self, cb, on_error=None):
         """
-        add_error_cb(cb) -> bool or Ellipsis
+        add_error_cb(cb, on_error=None) -> bool or Ellipsis
 
         Schedule cb to be invoked if an error happens while computing this
-        Future's value. The callback is not invoked if the Future resolves
-        without error. cb is passed the exception that the Future failed with.
-        This method returns whether the callback has *not* been invoked; a
-        return value of Ellipsis indicates that the callback has been
-        discarded because the Future already resolved successfully.
+        Future's value. on_error is an error handler; see the class docstring
+        for details.
+
+        The callback is not invoked if the Future resolves without error. It
+        is passed the exception that the Future failed with. This method
+        returns whether the callback has *not* been invoked; a return value of
+        Ellipsis indicates that the callback has been discarded because the
+        Future already resolved successfully.
         """
         with self._cond:
             if self.state == self.ST_DONE:
@@ -705,25 +760,28 @@ class Future(object):
                 self.error_cbs.append(cb)
                 return True
             e = self.error
-        cb(e)
+        self._run_callbacks((cb,), (e,), on_error)
         return False
 
-    def add_done_cb(self, cb):
+    def add_done_cb(self, cb, on_error=None):
         """
-        add_done_cb(cb) -> bool
+        add_done_cb(cb, on_error=None) -> bool
 
         Schedule cb to be invoked whenever this Future resolves (or
-        immediately if it already did). cb is passed the value the Future
-        resolved to as the only argument; its return value is ignored. This
-        method returns whether the callback has *not* been invoked but stored
-        for later use (for symmetry with add_error_cb()).
+        immediately if it already did). on_error is an error handler; see the
+        class docstring for details.
+
+        The callback is passed the value the Future resolved to as the only
+        argument; its return value is ignored. This method returns whether the
+        callback has *not* been invoked but stored for later use (for symmetry
+        with add_error_cb()).
         """
         with self._cond:
             if self.state not in (self.ST_DONE, self.ST_FAILED):
                 self.done_cbs.append(cb)
                 return True
             v = self.value
-        cb(v)
+        self._run_callbacks((cb,), (v,), on_error)
         return False
 
 class Scheduler(object):
@@ -804,12 +862,11 @@ class Scheduler(object):
         def __ge__(self, other): return self._key >= other._key
         def __gt__(self, other): return self._key >  other._key
 
-        def _on_error(self, exc, source):
+        def _on_error(self, exc, source, handler):
             "Internal method override; see Future for details."
-            if self.on_error is not None:
-                # pylint: disable=not-callable
-                self.on_error(exc, source)
-            elif source == self.SRC_CALLBACK:
+            if handler is not None:
+                handler(exc, source)
+            else:
                 self.parent._on_error(exc)
 
         def _set(self, *args):
