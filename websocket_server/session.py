@@ -392,6 +392,7 @@ class ReconnectingWebSocket(object):
         Internal method: Outermost code of the background thread responsible
         for reading WebSocket messages.
         """
+
         def detach(do_disconnect=True):
             "Clean up instance state pointing at the existence of this thread"
             with self:
@@ -405,9 +406,16 @@ class ReconnectingWebSocket(object):
                         self._wqueue = None
             if conn is not None and do_disconnect:
                 self._do_disconnect(conn)
+
         def sleep_check():
+            "Callback to check whether to continue a sleep."
             # Run in a "with self:" block.
             return (self.state_goal == RWST_CONNECTED)
+
+        def on_future_error(exc, source):
+            "Handler for errors raised in Future callbacks."
+            self._on_error(exc, ERRS_CALLBACK, True)
+
         this_thread = threading.current_thread()
         conn = None
         is_reconnect = False
@@ -445,7 +453,7 @@ class ReconnectingWebSocket(object):
                     self.state = RWST_CONNECTED
                     self.conn = conn
                     if self._connected is not None:
-                        self._connected.set(conn.id)
+                        self._connected.set(conn.id, on_error=on_future_error)
                         self._connected = None
                 self._on_connected(conn.id, (not is_reconnect), (not do_read))
                 # Read messages (unless we should disconnect immediately).
@@ -472,7 +480,8 @@ class ReconnectingWebSocket(object):
                 with self:
                     self.state = RWST_DISCONNECTED
                     if self._disconnected is not None:
-                        self._disconnected.set(old_conn_id)
+                        self._disconnected.set(old_conn_id,
+                                               on_error=on_future_error)
                         self._disconnected = None
                 self._on_disconnected(old_conn_id, (not is_reconnect), ok)
         except Exception as exc:
