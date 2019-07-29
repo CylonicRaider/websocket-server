@@ -797,6 +797,50 @@ class Future(object):
         self._run_callbacks((cb,), (v,), on_error)
         return False
 
+    def then(self, ok=None, error=None):
+        """
+        then(ok=None, error=None) -> Future
+
+        Return another Future chained to this one. ok and error are callbacks
+        for further processing of success/failure, each taking a single value
+        and returning a Future or an arbitrary value.
+
+        When this Future resolves or fails (whichever happens first), the
+        corresponding callback is called with the resolution/failure value as
+        the only argument, and the return value of that is handled as follows:
+        If it is a Future, the return value of then() is made to
+        resolve/fail whenever the callback's return value resolves/fails,
+        otherwise, the return value of the callback is used to resolve/fail
+        the Future returned from then() (depending on which callback had been
+        called originally).
+        """
+        def attach(link):
+            "Let the outer return value track the resolution status of link."
+            link.add_error_cb(ret.cancel)
+            link.add_done_cb(ret.set)
+        def error_cb(exc):
+            "Future chaining support callback (failure version)."
+            ret._chain_failed = True
+            if error is not None:
+                exc = error(exc)
+                if isinstance(exc, Future):
+                    return attach(exc)
+            ret.cancel(exc)
+        def done_cb(value):
+            "Future chaining support callback (resolution version)."
+            if ret._chain_failed:
+                return
+            if ok is not None:
+                value = ok(value)
+                if isinstance(value, Future):
+                    return attach(value)
+            ret.set(value)
+        ret = Future()
+        ret._chain_failed = False
+        self.add_error_cb(error_cb)
+        self.add_done_cb(done_cb)
+        return ret
+
 class Scheduler(object):
     """
     Scheduler(autostart=True) -> new instance
