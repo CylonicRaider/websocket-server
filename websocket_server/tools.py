@@ -502,6 +502,18 @@ class Future(object):
         ret.set(value)
         return ret
 
+    @classmethod
+    def failed(cls, exc=None):
+        """
+        failed(exc=None) -> new instance
+
+        Return a Future that has already failed to resolve with the given
+        failure value.
+        """
+        ret = cls()
+        ret.cancel(exc)
+        return ret
+
     def __init__(self, cb=None, lock=None):
         """
         __init__(cb=None, lock=None) -> None
