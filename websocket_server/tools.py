@@ -615,22 +615,6 @@ class Future(object):
                 'transition')
         return True
 
-    def set(self, value=None, on_error=None):
-        """
-        set(value=None, on_error=None) -> bool
-
-        Explicitly store an object in this Future. value is the value to
-        store. on_error is an error handler; see the class docstring for
-        details. Returns whether setting the Future's value succeeded (i.e.
-        whether the value was not already there and there was no computation
-        of the it running concurrently).
-
-        If value is omitted, this still wakes up all threads waiting for some
-        value to be computed; this allows using Future as a one-shot
-        equivalent of the threading.Event class.
-        """
-        return self._set(value, self.ST_PENDING, self.ST_DONE, on_error)
-
     def run(self, on_error=None):
         """
         run(on_error=None) -> bool or Ellipsis
@@ -660,6 +644,22 @@ class Future(object):
                 raise AssertionError('Future has gotten into an invalid '
                     'state')
         return True
+
+    def set(self, value=None, on_error=None):
+        """
+        set(value=None, on_error=None) -> bool
+
+        Explicitly store an object in this Future. value is the value to
+        store. on_error is an error handler; see the class docstring for
+        details. Returns whether setting the Future's value succeeded (i.e.
+        whether the value was not already there and there was no computation
+        of the it running concurrently).
+
+        If value is omitted, this still wakes up all threads waiting for some
+        value to be computed; this allows using Future as a one-shot
+        equivalent of the threading.Event class.
+        """
+        return self._set(value, self.ST_PENDING, self.ST_DONE, on_error)
 
     def cancel(self, on_error=None):
         """
