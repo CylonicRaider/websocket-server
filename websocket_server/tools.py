@@ -419,8 +419,9 @@ class Future(object):
     The Future can be *resolved* to a value by either invoking the stored
     callback (if any) via run() or explicitly setting the value via set().
     Alternatively, the Future can "*fail* to resolve" when the callback raises
-    an exception or cancel() is called; remark, however, that the Future
-    resolves "regularly" to a value of None immediately after that.
+    an exception or cancel() is called, resulting in a *failure value* (which
+    is typically an exception); remark, however, that the Future resolves
+    "regularly" to a value of None immediately after that.
 
     Read-only instance attributes are:
     cb       : The callback producing this Future's value (if any).
@@ -463,10 +464,10 @@ class Future(object):
 
     class Failure(Exception):
         """
-        An exception enclosing a failed Future's "failure value".
+        An exception enclosing a failed Future's failure value.
 
         The failure value can be an exception (if the Future executed a
-        callback) or None (if the Future has been cancelled). In order to
+        callback) or anything (if the Future has been cancelled). In order to
         provide a uniform interface, those are packaged into this exception
         in the generic error handling code.
 
@@ -508,9 +509,9 @@ class Future(object):
         Instance initializer; see the class docstring for details.
         """
         self.cb = cb
+        self.state = self.ST_PENDING
         self.value = None
         self.error = None
-        self.state = self.ST_PENDING
         self.error_cbs = []
         self.done_cbs = []
         self._cond = threading.Condition(lock)
@@ -661,19 +662,21 @@ class Future(object):
         """
         return self._set(value, self.ST_PENDING, self.ST_DONE, on_error)
 
-    def cancel(self, on_error=None):
+    def cancel(self, exc=None, on_error=None):
         """
-        cancel(on_error=None) -> bool
+        cancel(exc=None, on_error=None) -> bool
 
-        Cancel this Future's computation if it has not started yet. on_error
-        is an error handler; see the class docstring for details. Returns
-        whether cancelling succeeded (i.e. whether the value has neither
-        started being computed nor has been explicitly set).
+        Cancel this Future's computation if it has not started yet. exc is
+        the failure value (typically an exception; reported to callbacks).
+        on_error is an error handler; see the class docstring for details.
+        Returns whether cancelling succeeded (i.e. whether the value has
+        neither started being computed nor has been explicitly set).
 
-        This is treated as if computing the value failed with an exception but
-        that exception turned out to be None.
+        This is treated as if computing the value via a callback failed with
+        an exception but that exception turned out to be exc (which might not
+        be an exception at all).
         """
-        return self._fail(None, self.ST_PENDING, on_error)
+        return self._fail(exc, self.ST_PENDING, on_error)
 
     def get_state(self):
         """
@@ -695,6 +698,16 @@ class Future(object):
         """
         with self._cond:
             return self.value if self.state == self.ST_DONE else default
+
+    def get_error(self, default=None):
+        """
+        get_error(default=None) -> object
+
+        Retrieve the failure value of this Future, or default if the Future
+        has not failed to resolve (yet).
+        """
+        with self._cond:
+            return self.error if self.state == self.ST_FAILED else default
 
     def wait(self, timeout=None, run=False, default=None, on_error=None):
         """
