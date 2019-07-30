@@ -1266,14 +1266,14 @@ class WebSocketSession(object):
         """
         self.scheduler.add_now(lambda: self._run_cb(func, *args))
 
-    def _do_login(self, connid, initial, cb):
+    def _do_login(self, connid, initial):
         """
-        _do_login(connid, initial, cb) -> None
+        _do_login(connid, initial) -> Future or None
 
         Perform final setup work on an already-established underlying
-        connection. connid and initial are forwarded from _on_connected(); cb
-        is a callback to be invoked (with no arguments) when the setup is
-        finished.
+        connection. connid and initial are forwarded from _on_connected().
+        Returns a Future that resolves whenever the setup work is done, or
+        None to indicate that it is already done.
 
         As the method name suggests, the "setup work" might be, e.g.,
         authenticating to other side of the underlying connection. Separating
@@ -1281,11 +1281,10 @@ class WebSocketSession(object):
         commands from previous connections (which might, e.g., be privileged)
         are resent.
 
-        This method is executed on the scheduler thread and must do likewise
-        with cb. The default implementation does nothing aside from invoking
-        the callback immediately.
+        This method is executed on the scheduler thread. The default
+        implementation does nothing.
         """
-        cb()
+        return None
 
     def _on_connecting(self, initial):
         """
@@ -1310,14 +1309,19 @@ class WebSocketSession(object):
         transient is true, sets the session state to LOGGING_IN and invokes
         the _do_login() method.
         """
-        def login_callback():
-            self._on_logged_in(connid, initial)
+        def login_callback(v):
+            self.scheduler.add_now(lambda: self._on_logged_in(connid,
+                                                              initial))
         self._run_cb(self.on_connected, connid, initial, transient)
         with self:
             self._connection_transient = transient
             if transient: return
             self.state = SST_LOGGING_IN
-        self._do_login(connid, initial, login_callback)
+        res = self._do_login(connid, initial)
+        if res is None:
+            login_callback(None)
+        else:
+            res.add_done_cb(login_callback)
 
     def _on_logged_in(self, connid, initial):
         """
