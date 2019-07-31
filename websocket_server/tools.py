@@ -408,13 +408,15 @@ class AtomicSequence(object):
 
 class Future(object):
     """
-    Future(cb=None, lock=None) -> new instance
+    Future(cb=None, lock=None, on_error=None) -> new instance
 
     A wrapper around a value that may become available in the future. cb is
     a callback to compute the value, or None to indicate that the value must
     be set explicitly; if specified, the callback takes no arguments and
     returns the value to resolve the Future to. lock is used for thread
-    synchronization (and defaults to a new reentrant lock).
+    synchronization (and defaults to a new reentrant lock). on_error is used
+    to initialize the same-named instance attribute; see the error handling
+    note and the warning below for details.
 
     The Future can be *resolved* to a value by either invoking the stored
     callback (if any) via run() or explicitly setting the value via set().
@@ -432,26 +434,41 @@ class Future(object):
     state    : The computation state of this Future (one of the ST_PENDING ->
                ST_COMPUTING -> ST_DONE or ST_FAILED constants). Note that the
                value might change immediately after being accessed.
-    error_cbs: A list of callbacks to be run when the callback of this Future
-               (if any) raises an exception. If so, the Future's state is set
-               to ST_FAILED (waking any concurrent wait() calls), the error
-               callbacks are run, and the Future resolves (regularly) to a
-               value of None (invoking all done callbacks). See also
-               add_error_cb().
+    error_cbs: A list of callbacks to be run if this Future fails to resolve.
+               If so, the Future's state is set to ST_FAILED (waking any
+               concurrent wait() calls), the error callbacks are run, and the
+               Future resolves (regularly) to a value of None (invoking all
+               done callbacks). See also add_error_cb().
     done_cbs : A list of callbacks to be run whenever this Future resolves.
                Each is given the value resolved to as the only positional
                argument. See also add_done_cb().
+    on_error : A fallback error handler; see the note and the warning below
+               for details.
 
-    Error handling note: Multiple methods of this class (namely those that can
-    lead to the Future resolving) take an "on_error" argument (for forwards
-    compatibility, pass it as a keyword argument); if not None, it is called
-    by internal code whenever an unexpected error happens. It may choose to
-    propagate the information elsewhere, bail out by reraising an exception,
-    or suppress the error. The callback takes two (positional) arguments:
+    Error handling note: Unexpected errors (i.e. exceptions raised by
+    error_cbs and done_cbs as well as failures with no error_cbs installed)
+    are handled as follows:
+    - If present (i.e. not None), the per-instance error handler is called;
+    - Otherwise, if present, the error handler passed as a parameter of the
+      corresponding method is called (the relevant methods take an "on_error"
+      callback as an argument; pass it keyword-only for forwards
+      compatibility);
+    - Otherwise, an exception is raised (this is a last-resort option in
+      order to let no error go unnoticed, and might bring the Future into
+      an inconsistent state).
+    The handlers can choose to propagate the information about the error
+    somewhere else, or suppress it entirely, or bail out by raising
+    exceptions. They take the following (positional) arguments:
     exc   : An exception object indicating the nature of the error.
     source: A SRC_* constant indicating where the error originated.
-    Additionally, the callback may inspect sys.exc_info(). See also the
+    Additionally, the callbacks may inspect sys.exc_info(). See also the
     _on_error() method for more details.
+
+    WARNING: Be wary of unhandled errors when creating Future-s manually!
+             All Future-s returned from functions in this library are
+             configured to report errors back to where the Future-s themselves
+             originated from, where they are typically handled in some
+             meaningful way.
     """
 
     ST_PENDING   = 'PENDING'
@@ -514,9 +531,9 @@ class Future(object):
         ret.cancel(exc)
         return ret
 
-    def __init__(self, cb=None, lock=None):
+    def __init__(self, cb=None, lock=None, on_error=None):
         """
-        __init__(cb=None, lock=None) -> None
+        __init__(cb=None, lock=None, on_error=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
@@ -526,6 +543,7 @@ class Future(object):
         self.error = None
         self.error_cbs = []
         self.done_cbs = []
+        self.on_error = on_error
         self._cond = threading.Condition(lock)
 
     def _on_error(self, exc, source, handler):
@@ -538,24 +556,32 @@ class Future(object):
         None.
 
         There are two distinct possible sources:
-        FAILURE : The Future failed to resolve, and there was no error
-                  handler callback (see add_error_cb()) attached. exc is an
-                  instance of the Failure exception enclosing the "failure
-                  value" (whatever that may be) and synthesized in the code
-                  invoking this method.
-        CALLBACK: A callback attached to the Future raised an exception.
+        FAILURE : The Future failed to resolve, and there was no resolution
+                  error handler callback (see add_error_cb()) attached. exc
+                  is an instance of the Failure exception enclosing the
+                  "failure value" (whatever that may be) and synthesized in
+                  the code invoking this method.
+        CALLBACK: A callback attached to the Future raised an exception; the
+                  exception object is passed as exc.
         In all cases, sys.exc_info() may be inspected to gain more information
         about the error.
 
-        Exceptions raised in the callback are not handled in any special way,
-        and the callback is expected to guard against them.
+        There are two on-error callbacks, an instance-wide one (stored in the
+        "on_error" instance attribute) and one passed as an argument to the
+        methods invoking this one (seen here as "handler"). See the class
+        docstring for the handlers' signature.
 
-        The default implementation calls the the handler argument, if is not
-        None, with the same parameters as this method (minus handler itself);
-        otherwise, the exception is re-raised in order to ensure errors do not
-        go unnoticed as default.
+        Exceptions raised in the callbacks are not handled in any special way,
+        and the callbacks are expected to guard against them.
+
+        The default implementation describes the behavior given in the class
+        docstring: The instance-wide handler is called, if present; otherwise,
+        the handler passed as an argument is tried; otherwise, the current
+        exception is re-raised.
         """
-        if handler is not None:
+        if self.on_error is not None:
+            self.on_error(exc, source)
+        elif handler is not None:
             handler(exc, source)
         else:
             raise
@@ -847,7 +873,7 @@ class Future(object):
                 if isinstance(value, Future):
                     return attach(value)
             ret.set(value)
-        ret = Future()
+        ret = Future(on_error=self.on_error)
         ret._chain_failed = False
         self.add_error_cb(error_cb)
         self.add_done_cb(done_cb)
@@ -921,6 +947,7 @@ class Scheduler(object):
             self.timestamp = timestamp
             self.daemon = daemon
             self.seq = seq
+            self.on_error = lambda exc, source: parent._on_error(exc)
             self._referencing = False
             self._key = (self.timestamp, self.seq)
 
@@ -930,13 +957,6 @@ class Scheduler(object):
         def __ne__(self, other): return self._key != other._key
         def __ge__(self, other): return self._key >= other._key
         def __gt__(self, other): return self._key >  other._key
-
-        def _on_error(self, exc, source, handler):
-            "Internal method override; see Future for details."
-            if handler is not None:
-                handler(exc, source)
-            else:
-                self.parent._on_error(exc)
 
         def _set(self, *args):
             "Internal method override; see Future for details."
