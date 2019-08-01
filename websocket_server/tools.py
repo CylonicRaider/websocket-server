@@ -448,11 +448,11 @@ class Future(object):
     Error handling note: Unexpected errors (i.e. exceptions raised by
     error_cbs and done_cbs as well as failures with no error_cbs installed)
     are handled as follows:
-    - If present (i.e. not None), the per-instance error handler is called;
-    - Otherwise, if present, the error handler passed as a parameter of the
-      corresponding method is called (the relevant methods take an "on_error"
-      callback as an argument; pass it keyword-only for forwards
+    - If present (i.e. not None), the error handler passed as a parameter to
+      the corresponding method is called (the relevant methods take an
+      "on_error" callback as an argument; pass it keyword-only for forwards
       compatibility);
+    - Otherwise, if present, the per-instance error handler is called;
     - Otherwise, an exception is raised (this is a last-resort option in
       order to let no error go unnoticed, and might bring the Future into
       an inconsistent state).
@@ -465,10 +465,10 @@ class Future(object):
     _on_error() method for more details.
 
     WARNING: Be wary of unhandled errors when creating Future-s manually!
-             All Future-s returned from functions in this library are
-             configured to report errors back to where the Future-s themselves
-             originated from, where they are typically handled in some
-             meaningful way.
+             All Future-s returned from functions in this library (aside from
+             this class) are configured to report errors back to where the
+             Future-s themselves originated from, where they are typically
+             handled in some meaningful way.
     """
 
     ST_PENDING   = 'PENDING'
@@ -509,26 +509,31 @@ class Future(object):
         """
 
     @classmethod
-    def resolved(cls, value=None):
+    def resolved(cls, value=None, on_error=None):
         """
-        resolved(value=None) -> new instance
+        resolved(value=None, on_error=None) -> new instance
 
-        Return a Future that is already resolved to the given value.
+        Return a Future that is already resolved to the given value, using
+        the given error handler for callback exceptions.
         """
-        ret = cls()
+        ret = cls(on_error=on_error)
         ret.set(value)
         return ret
 
     @classmethod
-    def failed(cls, exc=None):
+    def failed(cls, exc=None, on_error=None):
         """
-        failed(exc=None) -> new instance
+        failed(exc=None, on_error=None) -> new instance
 
         Return a Future that has already failed to resolve with the given
-        failure value.
+        failure value, using the given error handler for callback exceptions.
+
+        The error handler is *not* invoked for the (otherwise unhandled)
+        failure of the returned Future, assuming that the code invoking this
+        method is aware of the return value's status.
         """
-        ret = cls()
-        ret.cancel(exc)
+        ret = cls(on_error=on_error)
+        ret.cancel(exc, on_error=lambda e, s: None)
         return ret
 
     def __init__(self, cb=None, lock=None, on_error=None):
@@ -575,14 +580,14 @@ class Future(object):
         and the callbacks are expected to guard against them.
 
         The default implementation describes the behavior given in the class
-        docstring: The instance-wide handler is called, if present; otherwise,
-        the handler passed as an argument is tried; otherwise, the current
+        docstring: The handler passed as an argument is called, if present;
+        otherwise, the instance-wide handler is tried; otherwise, the current
         exception is re-raised.
         """
-        if self.on_error is not None:
-            self.on_error(exc, source)
-        elif handler is not None:
+        if handler is not None:
             handler(exc, source)
+        elif self.on_error is not None:
+            self.on_error(exc, source)
         else:
             raise
 
