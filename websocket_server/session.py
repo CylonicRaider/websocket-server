@@ -332,32 +332,38 @@ class ReconnectingWebSocket(object):
         connect is true, otherwise to RWST_DISCONNECTED if disconnect is true,
         otherwise it is unmodified.
         """
+
         def disconnect_task():
             "Helper function responsible for shutting down the connection."
             self._on_disconnecting(disconnect_conn.id, (not connect),
                                    disconnect_ok)
             self._do_disconnect(disconnect_conn, True)
+
+        def on_future_error(exc, source):
+            "Handler for errors raised in Future callbacks."
+            self._on_error(exc, ERRS_CALLBACK, True)
+
         disconnect_conn = None
         with self:
             # Update attributes; prepare return value.
             if connect:
                 self.state_goal = RWST_CONNECTED
                 if self.state == RWST_CONNECTED:
-                    ret = Future.resolved()
+                    ret = Future.resolved(on_error=on_future_error)
                 else:
                     if self._connected is None:
-                        self._connected = Future()
+                        self._connected = Future(on_error=on_future_error)
                     ret = self._connected
             elif disconnect:
                 self.state_goal = RWST_DISCONNECTED
                 if self.state == RWST_DISCONNECTED:
-                    ret = Future.resolved()
+                    ret = Future.resolved(on_error=on_future_error)
                 else:
                     if self._disconnected is None:
-                        self._disconnected = Future()
+                        self._disconnected = Future(on_error=on_future_error)
                     ret = self._disconnected
             else:
-                ret = Future.resolved()
+                ret = Future.resolved(on_error=on_future_error)
             if url is not None:
                 self.url = url
             if disconnect:
@@ -412,10 +418,6 @@ class ReconnectingWebSocket(object):
             # Run in a "with self:" block.
             return (self.state_goal == RWST_CONNECTED)
 
-        def on_future_error(exc, source):
-            "Handler for errors raised in Future callbacks."
-            self._on_error(exc, ERRS_CALLBACK, True)
-
         this_thread = threading.current_thread()
         conn = None
         is_reconnect = False
@@ -453,7 +455,7 @@ class ReconnectingWebSocket(object):
                     self.state = RWST_CONNECTED
                     self.conn = conn
                     if self._connected is not None:
-                        self._connected.set(conn.id, on_error=on_future_error)
+                        self._connected.set(conn.id)
                         self._connected = None
                 self._on_connected(conn.id, (not is_reconnect), (not do_read))
                 # Read messages (unless we should disconnect immediately).
@@ -480,8 +482,7 @@ class ReconnectingWebSocket(object):
                 with self:
                     self.state = RWST_DISCONNECTED
                     if self._disconnected is not None:
-                        self._disconnected.set(old_conn_id,
-                                               on_error=on_future_error)
+                        self._disconnected.set(old_conn_id)
                         self._disconnected = None
                 self._on_disconnected(old_conn_id, (not is_reconnect), ok)
         except Exception as exc:
