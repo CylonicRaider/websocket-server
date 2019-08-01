@@ -1007,6 +1007,9 @@ class WebSocketSession(object):
             self.on_response = on_response
             self.on_cancelled = on_cancelled
             self.state = CST_NEW
+            self._expects_response = (id is not None and
+                (responses is None or responses > 0))
+            self._status_tracker = None
 
         def serialize(self):
             """
@@ -1020,6 +1023,19 @@ class WebSocketSession(object):
             of an appropriate type.
             """
             return self.data
+
+        def is_response_ok(self, evt):
+            """
+            is_response_ok(evt) -> bool
+
+            Test whether the given Event, which may be assumed to be a
+            response to this Command, does *not* consistute some sort of
+            "error" response, and return that.
+
+            The default implementation returns the event's "is_error"
+            attribute without modification.
+            """
+            return evt.is_ok
 
         def _on_sending(self):
             """
@@ -1048,10 +1064,15 @@ class WebSocketSession(object):
             fully received (or transmitted); in particular, _on_response()
             might be invoked before this method (see also _on_sending()).
 
-            Executed on the scheduler thread. The default implementation does
-            nothing.
+            Executed on the scheduler thread. The default implementation
+            updates internal bookkeeping data.
             """
-            pass
+            if self._expects_response:
+                return
+            elif ok:
+                self._status_tracker.set()
+            else:
+                self._status_tracker.cancel()
 
         def _on_response(self, evt):
             """
@@ -1060,10 +1081,19 @@ class WebSocketSession(object):
             Event handler method invoked when an event with the same ID as
             this command (i.e. a response to this command) arrives.
 
-            Executed on the scheduler thread. The default implementation does
-            nothing.
+            Executed on the scheduler thread. The default implementation
+            invokes the corresponding callback and updates internal
+            bookkeeping data.
             """
-            run_cb(self.on_response, evt)
+            try:
+                run_cb(self.on_response, evt)
+            finally:
+                if self._expects_response:
+                    self._responses -= 1
+                    if self._responses <= 0:
+                        self._expects_response = False
+                        if self._status_tracker is not None:
+                            self._status_tracker.set()
 
         def _on_disconnect(self, final, ok, safe):
             """
@@ -1112,20 +1142,26 @@ class WebSocketSession(object):
             started being sent but before a reply to the command arrives, and
             the command is not safe-to-resend (see the resendable attribute).
 
-            Executed on the scheduler thread. The default implementation does
-            nothing. Other implementations might inspect the command's state
-            and make additional decisions.
+            Executed on the scheduler thread. The default implementation calls
+            the corresponding callback and updates internal bookkeeping data.
+            Other implementations might inspect the command's state and make
+            additional decisions.
             """
-            run_cb(self.on_cancelled)
+            try:
+                run_cb(self.on_cancelled)
+            finally:
+                if self._status_tracker is not None:
+                    self._status_tracker.cancel()
 
     class Event(object):
         """
-        Event(data, connid, id=None) -> new instance
+        Event(data, connid, id=None, is_ok=False) -> new instance
 
         A message received from the underlying connection of a
         WebSocketSession. data is the payload of the event; connid is the
         ID of the connection the event arrived from; id is an identifier for
-        matching events to related commands.
+        matching events to related commands; is_ok tells whether this Event
+        does *not* represent some sort of error message.
 
         Instance attributes (all initialized from the corresponding
         constructor parameters) are:
@@ -1135,6 +1171,7 @@ class WebSocketSession(object):
         id    : An identifier relating this event to some command. None is
                 special-cased to mean that this event cannot be identified.
                 See also the Command class for more details on reply matching.
+        is_ok: Whether this Event is not some sort of error message.
         """
 
         @classmethod
@@ -1168,15 +1205,16 @@ class WebSocketSession(object):
             """
             return cls(data, connid)
 
-        def __init__(self, data, connid, id=None):
+        def __init__(self, data, connid, id=None, is_ok=False):
             """
-            __init__(data, connid, id=None) -> None
+            __init__(data, connid, id=None, is_ok=False) -> None
 
             Instance initializer; see the class docstring for details.
             """
             self.data = data
             self.connid = connid
             self.id = id
+            self.is_ok = is_ok
 
     @classmethod
     def create(cls, url, protos=None, cookies=None, **kwds):
@@ -1388,11 +1426,6 @@ class WebSocketSession(object):
                 cmd.state = CST_CONFIRMED
         handler = self._on_event if cmd is None else cmd._on_response
         self._run_cb(handler, evt)
-        with self:
-            if cmd is not None and cmd.responses is not None:
-                cmd.responses -= 1
-                if cmd.responses <= 0:
-                    self.commands.pop(evt.id, None)
 
     def _on_event(self, evt):
         """
@@ -1583,18 +1616,27 @@ class WebSocketSession(object):
 
     def _submit(self, cmd, early=False):
         """
-        _submit(cmd, early=False) -> None
+        _submit(cmd, early=False) -> Future
 
         Extended version of submit() for use by subclasses. cmd is the Command
         to be (eventually) sent; early defines whether the command is part of
         setting up the session and thus should *not* wait until the setup
         finishes; it is an error to specify early=True if the WebSocketSession
-        is not in the LOGGING_IN state.
+        is not in the LOGGING_IN state. Returns a Future that resolves or
+        fails to resolve whenever the command is fully processed.
         """
+        def on_future_error(exc, source):
+            self._on_error(exc, ERRS_CALLBACK, True)
+        def remove_cb(value):
+            with self:
+                self.commands.pop(cmd.id, None)
         with self:
-            if cmd.id is not None and (cmd.responses is None or
-                                       cmd.responses > 0):
+            if cmd._status_tracker is not None:
+                raise RuntimeError('Cannot submit Command more than once')
+            cmd._status_tracker = Future(on_error=on_future_error)
+            if cmd._expects_response:
                 self.commands[cmd.id] = cmd
+                cmd._status_tracker.add_done_cb(remove_cb)
             if early:
                 if self.state != SST_LOGGING_IN:
                     raise RuntimeError('May not submit early messages unless '
@@ -1603,19 +1645,24 @@ class WebSocketSession(object):
             else:
                 self.queue.append(cmd)
         self._do_submit()
+        return cmd._status_tracker
 
     def submit(self, cmd):
         """
-        submit(cmd) -> None
+        submit(cmd) -> Future
 
         Queue the given Command instance for being sent into the underlying
         connection and register it as waiting for responses (as necessary).
+        Returns a Future that resolves or fails to resolve whenever the
+        Command is fully processed (i.e. is not waiting for any responses or
+        has been cancelled).
 
         If the session is already fully established, this also attempts to
         actually submit the command (unless there already are other commands
-        being sent).
+        being sent). It is an error to to submit the same Command instance
+        more than once.
         """
-        self._submit(cmd)
+        return self._submit(cmd)
 
     def connect(self, wait=True, **kwds):
         """
