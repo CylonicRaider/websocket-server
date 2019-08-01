@@ -1089,8 +1089,8 @@ class WebSocketSession(object):
                 run_cb(self.on_response, evt)
             finally:
                 if self._expects_response:
-                    self._responses -= 1
-                    if self._responses <= 0:
+                    self.responses -= 1
+                    if self.responses <= 0:
                         self._expects_response = False
                         if self._status_tracker is not None:
                             self._status_tracker.set()
