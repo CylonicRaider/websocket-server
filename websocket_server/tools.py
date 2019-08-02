@@ -948,28 +948,35 @@ class Scheduler(object):
 
     class Task(Future):
         """
-        Task(parent, cb, timestamp, daemon, seq) -> new instance
+        Task(parent, cb, extend, timestamp, daemon, seq) -> new instance
 
         A concrete task to be executed by a Scheduler. parent is the Scheduler
         this task belongs to; cb is a callable to invoke when executing this
-        task; timestamp is the time at which this task is to be executed;
-        daemon defines whether this task is "daemonic" (i.e. does not prevent
-        the scheduler from stopping); seq is the sequence number of the task
-        (used to break ties when tasks are to be executed at exactly the same
-        time; the lower seq, the earlier a task runs).
+        task; extend specifies whether a Future returned by this task should
+        extend this one; timestamp is the time at which this task is to be
+        executed; daemon defines whether this task is "daemonic" (i.e. does
+        not prevent the scheduler from stopping); seq is the sequence number
+        of the task (used to break ties when tasks are to be executed at
+        exactly the same time; the lower seq, the earlier a task runs).
 
         The constructor parameters are stored as correspondingly-named
         instance attributes; those must not be changed after initialization
         (or erratic behavior occurs).
+
+        Task is a subclass of Future, therefore, Tasks can be used where
+        Futures are expected. If cb already returns a Future and extend is
+        True, the Task is resolved only when the returned Future resolves
+        (although the Task might have been removed from the Scheduler by
+        then). See the Future documentation for more details.
         """
 
-        def __init__(self, parent, cb, timestamp, daemon, seq):
+        def __init__(self, parent, cb, extend, timestamp, daemon, seq):
             """
-            __init__(parent, cb, timestamp, daemon, seq) -> None
+            __init__(parent, cb, extend, timestamp, daemon, seq) -> None
 
             Instance initializer; see the class docstring for details.
             """
-            Future.__init__(self, cb)
+            Future.__init__(self, cb, extend)
             self.parent = parent
             self.cb = cb
             self.timestamp = timestamp
@@ -1129,54 +1136,57 @@ class Scheduler(object):
             self.cond.notifyAll()
         return task
 
-    def add_abs(self, cb, timestamp, daemon=False):
+    def add_abs(self, cb, timestamp, daemon=False, extend=False):
         """
-        add_abs(cb, timestamp, daemon=False) -> Task
+        add_abs(cb, timestamp, daemon=False, extend=False) -> Task
 
         Schedule cb to be executed at timestamp. daemon specifies whether the
-        task is daemonic (see the Task class for details). Returns a new Task
-        object, which can be used to cancel execution again.
+        task is daemonic and extend specifies what to do if the task returns
+        a Future; see the Task class for details. Returns a new Task object.
         """
         with self.cond:
-            return self.add_raw(self.Task(self, cb, timestamp, daemon,
+            return self.add_raw(self.Task(self, cb, extend, timestamp, daemon,
                                           self._seq()))
 
-    def add(self, cb, timediff, daemon=False):
+    def add(self, cb, timediff, daemon=False, extend=False):
         """
         add(cb, timediff, daemon=False) -> Task
 
         Schedule cb to be executed in timediff seconds. daemon specifies
-        whether the task is daemonic (see the Task class for details). Returns
-        a new Task object, which can be used to cancel execution again.
+        whether the task is daemonic and extend specifies what to do if the
+        task returns a Future; see the Task class for details. Returns a new
+        Task object.
         """
-        return self.add_abs(cb, self.time() + timediff, daemon)
+        return self.add_abs(cb, self.time() + timediff, daemon, extend)
 
-    def add_now(self, cb, daemon=False):
+    def add_now(self, cb, daemon=False, extend=False):
         """
-        add_now(cb, daemon=False) -> Task
+        add_now(cb, daemon=False, extend=False) -> Task
 
         Schedule cb to be executed as soon as possible. daemon specifies
-        whether the resulting task is daemonic (see the Task class for
-        details). Returns a new Task object, which can be used to cancel
-        execution again (should one have a chance before the task starts
-        running).
+        whether the resulting task is daemonic and extend specifies what to do
+        if the task returns a Future; see the Task class for details. Returns
+        a new Task object.
         """
-        return self.add_abs(cb, self.time(), daemon)
+        return self.add_abs(cb, self.time(), daemon, extend)
 
-    def wrap(self, func):
+    def wrap(self, func, extend=False):
         """
-        wrap(func) -> callable
+        wrap(func, extend=False) -> callable
 
         Wrap func in a callable that runs func inside this scheduler. When the
         returned callable is invoked, it uses add_now() to schedule a task
         which will run func with any arguments provided to the returned
         callable. The callable's return value is a Task (and thus Future)
         object that allows waiting for the result of the execution or
-        cancelling it again (as long as the caller is aware of that).
+        cancelling it again; if extend is True and the return value of func
+        is a Future, the Future returned from this method is extended to
+        match the Future returned from func, allowing the wrapped func to be
+        used as a drop-in replacement for func itself.
         """
         # Give the function a fancy name.
         def scheduler_wrapper(*_args, **_kwds):
-            return self.add_now(lambda: func(*_args, **_kwds))
+            return self.add_now(lambda: func(*_args, **_kwds), extend=extend)
         return scheduler_wrapper
 
     def _on_error(self, exc):
