@@ -408,15 +408,19 @@ class AtomicSequence(object):
 
 class Future(object):
     """
-    Future(cb=None, lock=None, on_error=None) -> new instance
+    Future(cb=None, extend=False, lock=None, on_error=None) -> new instance
 
     A wrapper around a value that may become available in the future. cb is
     a callback to compute the value, or None to indicate that the value must
     be set explicitly; if specified, the callback takes no arguments and
-    returns the value to resolve the Future to. lock is used for thread
-    synchronization (and defaults to a new reentrant lock). on_error is used
-    to initialize the same-named instance attribute; see the error handling
-    note and the warning below for details.
+    returns the value to resolve the Future to. extend indicates what to do
+    when the callback returns another Future: If it does, this Future is
+    "attached" to the other one, and resolves/fails whenever the attached-to
+    Future does so; otherwise, the fact that the return value is another
+    Future is ignored. lock is used for thread synchronization (and defaults
+    to a new reentrant lock). on_error is used to initialize the same-named
+    instance attribute; see the error handling note and the warning below for
+    details.
 
     The Future can be *resolved* to a value by either invoking the stored
     callback (if any) via run() or explicitly setting the value via set().
@@ -427,13 +431,17 @@ class Future(object):
 
     Read-only instance attributes are:
     cb       : The callback producing this Future's value (if any).
+    extend   : If the callback returns another Future, this tells whether this
+               Future should be "extended", i.e. attached to the callback's
+               return value.
+    state    : The computation state of this Future (one of the ST_PENDING ->
+               ST_COMPUTING (-> optionally ST_WAITING) -> (ST_DONE or
+               ST_FAILED) constants). Note that the value might change
+               immediately after being accessed.
     value    : The object enclosed by this Future, or None if it has not been
                computed (yet).
     error    : The exception object this Future failed with, or None if that
                has not happened (yet).
-    state    : The computation state of this Future (one of the ST_PENDING ->
-               ST_COMPUTING -> ST_DONE or ST_FAILED constants). Note that the
-               value might change immediately after being accessed.
     error_cbs: A list of callbacks to be run if this Future fails to resolve.
                If so, the Future's state is set to ST_FAILED (waking any
                concurrent wait() calls), the error callbacks are run, and the
@@ -473,6 +481,7 @@ class Future(object):
 
     ST_PENDING   = 'PENDING'
     ST_COMPUTING = 'COMPUTING'
+    ST_WAITING   = 'WAITING'
     ST_FAILED    = 'FAILED'
     ST_DONE      = 'DONE'
 
@@ -536,13 +545,14 @@ class Future(object):
         ret.cancel(exc, on_error=lambda e, s: None)
         return ret
 
-    def __init__(self, cb=None, lock=None, on_error=None):
+    def __init__(self, cb=None, extend=False, lock=None, on_error=None):
         """
-        __init__(cb=None, lock=None, on_error=None) -> None
+        __init__(cb=None, extend=False, lock=None, on_error=None) -> None
 
         Instance initializer; see the class docstring for details.
         """
         self.cb = cb
+        self.extend = extend
         self.state = self.ST_PENDING
         self.value = None
         self.error = None
@@ -672,7 +682,7 @@ class Future(object):
         with self._cond:
             if self.state in (self.ST_DONE, self.ST_FAILED):
                 return True
-            elif self.state == self.ST_COMPUTING:
+            elif self.state in (self.ST_COMPUTING, self.ST_WAITING):
                 return Ellipsis
             elif self.cb is None:
                 return False
@@ -683,11 +693,24 @@ class Future(object):
             if not self._fail(exc, self.ST_COMPUTING, on_error):
                 raise AssertionError('Future has gotten into an invalid '
                     'state')
-        else:
+            return True
+        with self._cond:
+            do_extend = (self.extend and isinstance(v, Future))
+            if do_extend:
+                if self.state != self.ST_COMPUTING:
+                    raise AssertionError('Future has gotten into an invalid '
+                        'state')
+                self.state = self.ST_WAITING
+        if not do_extend:
             if not self._set(v, self.ST_COMPUTING, self.ST_DONE, on_error):
                 raise AssertionError('Future has gotten into an invalid '
                     'state')
-        return True
+            return True
+        v.add_error_cb(lambda exc: self._fail(exc, self.ST_WAITING,
+                                              on_error))
+        v.add_done_cb(lambda val: self._set(val, self.ST_WAITING,
+                                            self.ST_DONE, on_error))
+        return Ellipsis
 
     def set(self, value=None, on_error=None):
         """
