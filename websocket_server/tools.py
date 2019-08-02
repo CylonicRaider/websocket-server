@@ -1086,8 +1086,9 @@ class Scheduler(object):
         stops concurrent run()s and wakes concurrent join()s.
         """
         with self.cond:
-            for task in self.queue:
-                task.cancel()
+            cancellist = tuple(self.queue)
+        for task in cancellist:
+            task.cancel()
 
     def add_raw(self, task):
         """
