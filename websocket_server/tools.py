@@ -995,14 +995,14 @@ class Scheduler(object):
 
         def _set(self, *args):
             "Internal method override; see Future for details."
-            ret = Future._set(self, *args)
-            if ret:
+            try:
+                return Future._set(self, *args)
+            finally:
                 with self.parent.cond:
                     if self._referencing:
                         self._referencing = False
                         self.parent._references -= 1
                         self.parent.cond.notifyAll()
-            return ret
 
     class Hold(object):
         """
