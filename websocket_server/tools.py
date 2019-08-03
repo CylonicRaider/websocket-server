@@ -1182,6 +1182,16 @@ class Scheduler(object):
         """
         return self.add_abs(cb, self._time(), daemon, extend)
 
+    def delay(self, timediff, value=None, daemon=False):
+        """
+        delay(timediff, value=None) -> Task
+
+        Return a Task (i.e. also a Future) that will resolve to value in
+        timediff seconds. daemon specifies whether the resulting Task is
+        daemonic (see the Task class for details).
+        """
+        return self.add(lambda: value, timediff, daemon)
+
     def wrap(self, func, extend=False):
         """
         wrap(func, extend=False) -> callable
