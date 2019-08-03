@@ -1002,7 +1002,7 @@ class Scheduler(object):
                     if self._referencing:
                         self._referencing = False
                         self.parent._references -= 1
-                        self.parent.cond.notifyAll()
+                        self.parent._wake()
 
     class Hold(object):
         """
@@ -1061,7 +1061,7 @@ class Scheduler(object):
                 if not self.active: return False
                 self.parent._references -= 1
                 self.active = False
-                self.parent.cond.notifyAll()
+                self.parent._wake()
                 return True
 
     def __init__(self, autostart=True):
@@ -1078,25 +1078,36 @@ class Scheduler(object):
         self._running = 0
         self._seq = AtomicSequence(lock=self.cond)
 
-    def time(self):
+    def _time(self):
         """
         time() -> float
 
-        Return the current time. The default implementation returns the
-        current UNIX time.
+        Return the current time.
+
+        The default implementation returns the current UNIX time.
         """
         return time.time()
 
-    def wait(self, delay):
+    def _wait(self, delay):
         """
-        wait(delay) -> None
+        _wait(delay) -> None
 
-        Sleep for the given amount of time. delay is either a floating-point
-        number denoting the amount of time to wait or None to wait forever
-        (until interrupted externally).
+        Block the calling thread for the given amount of time or until
+        woken. delay is either a floating-point number denoting the amount of
+        time to wait or None to wait forever.
+
+        The default implementation interprets delay as an amount of seconds,
+        consistently with _time().
         """
-        with self.cond:
-            self.cond.wait(delay)
+        self.cond.wait(delay)
+
+    def _wake(self):
+        """
+        _wake() -> None
+
+        Wake up all threads currently blocked in calls to _wait().
+        """
+        self.cond.notifyAll()
 
     def hold(self):
         """
@@ -1133,7 +1144,7 @@ class Scheduler(object):
                 task._referencing = True
                 self._references += 1
                 self._do_autostart()
-            self.cond.notifyAll()
+            self._wake()
         return task
 
     def add_abs(self, cb, timestamp, daemon=False, extend=False):
@@ -1157,7 +1168,7 @@ class Scheduler(object):
         task returns a Future; see the Task class for details. Returns a new
         Task object.
         """
-        return self.add_abs(cb, self.time() + timediff, daemon, extend)
+        return self.add_abs(cb, self._time() + timediff, daemon, extend)
 
     def add_now(self, cb, daemon=False, extend=False):
         """
@@ -1168,7 +1179,7 @@ class Scheduler(object):
         if the task returns a Future; see the Task class for details. Returns
         a new Task object.
         """
-        return self.add_abs(cb, self.time(), daemon, extend)
+        return self.add_abs(cb, self._time(), daemon, extend)
 
     def wrap(self, func, extend=False):
         """
@@ -1215,14 +1226,14 @@ class Scheduler(object):
         try:
             while 1:
                 with self.cond:
-                    now = self.time()
+                    now = self._time()
                     while self._references > 0 and (not self.queue or
                             self.queue[0].timestamp > now):
                         if self.queue:
-                            self.wait(self.queue[0].timestamp - now)
+                            self._wait(self.queue[0].timestamp - now)
                         else:
-                            self.wait(None)
-                        now = self.time()
+                            self._wait(None)
+                        now = self._time()
                     if self._references <= 0: break
                     head = heapq.heappop(self.queue)
                 head.run()
@@ -1266,14 +1277,14 @@ class Scheduler(object):
         """
         with self.cond:
             if timeout is not None:
-                deadline = self.time() + timeout
+                deadline = self._time() + timeout
                 while self._references > 0:
-                    now = self.time()
+                    now = self._time()
                     if now >= deadline: return False
-                    self.wait(deadline - now)
+                    self._wait(deadline - now)
             else:
                 while self._references > 0:
-                    self.wait(None)
+                    self._wait(None)
             return True
 
 class EOFQueue(object):
