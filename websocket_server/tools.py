@@ -934,11 +934,17 @@ class Scheduler(object):
     is expected to be a callable that accepts a single positional argument
     (the exception being handled) and returns nothing.
 
+    Timing note: As default, the timing methods (_time() and _wait(); _wake()
+    also belongs to them but does not handle time itself) count time in
+    seconds (or fractions thereof), with "absolute" times being relative to
+    the UNIX Epoch. A subclass could replace them with mehods using other
+    units; the documentation uses "seconds" nonetheless.
+
     Concurrency note: Python converts SIGINT signals into KeyboardInterrupt
     exceptions raised in the main thread. Since those may occur at arbitrary
     times while arbitrary code is running, it is not safe to run() a Scheduler
     in the main thread. It is more advisable to execute the scheduler in a
-    background thread and to wait() for it in the main thread.
+    background thread and to join() it in the main thread.
 
     See also the "sched" module in the standard library. A key difference to
     that module's event scheduler is that this Scheduler allows submitting
@@ -1082,9 +1088,7 @@ class Scheduler(object):
         """
         time() -> float
 
-        Return the current time.
-
-        The default implementation returns the current UNIX time.
+        Return the current time in seconds.
         """
         return time.time()
 
@@ -1094,10 +1098,7 @@ class Scheduler(object):
 
         Block the calling thread for the given amount of time or until
         woken. delay is either a floating-point number denoting the amount of
-        time to wait or None to wait forever.
-
-        The default implementation interprets delay as an amount of seconds,
-        consistently with _time().
+        seconds to wait for or None to wait forever.
         """
         self.cond.wait(delay)
 
@@ -1187,10 +1188,10 @@ class Scheduler(object):
 
         Wrap func in a callable that runs func inside this scheduler. When the
         returned callable is invoked, it uses add_now() to schedule a task
-        which will run func with any arguments provided to the returned
+        which will run func with arguments forwarded from the returned
         callable. The callable's return value is a Task (and thus Future)
         object that allows waiting for the result of the execution or
-        cancelling it again; if extend is True and the return value of func
+        cancelling it again. If extend is True and the return value of func
         is a Future, the Future returned from this method is extended to
         match the Future returned from func, allowing the wrapped func to be
         used as a drop-in replacement for func itself.
