@@ -107,8 +107,8 @@ def report_error(exc, source, swallow, output=None):
     info = sys.exc_info()
     if info[1] is not exc or swallow:
         buf.append(' %r' % (exc,))
+    buf.append('\n')
     if info[1] is not None and not swallow:
-        buf.append('\n')
         buf.extend(traceback.format_exception(*info))
     output.write(''.join(buf))
     output.flush()
