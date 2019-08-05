@@ -565,8 +565,8 @@ class ReconnectingWebSocket(object):
 
         The return value is expected to be a valid WebSocketFile with an "id"
         attribute containing a comparable and hashable object that uniquely
-        identifies the connection. This implementation uses a random (version
-        4) UUID.
+        identifies the connection and is not the None singleton. This
+        implementation uses a random (version 4) UUID.
 
         Concurrency note: This method is called with no locks held; attribute
         accesses should be protected via "with self:" as necessary. However,
@@ -1251,6 +1251,7 @@ class WebSocketSession(object):
         self.queue = collections.deque()
         self._lock = threading.RLock()
         self._send_queued = False
+        self._connection_id = None
         self._connection_transient = False
         self._outer_hold = scheduler.hold()
         self._inner_hold = scheduler.hold()
@@ -1353,6 +1354,7 @@ class WebSocketSession(object):
                                                               initial))
         self._run_cb(self.on_connected, connid, initial, transient)
         with self:
+            self._connection_id = connid
             self._connection_transient = transient
             if transient: return
             self.state = SST_LOGGING_IN
@@ -1465,6 +1467,7 @@ class WebSocketSession(object):
                 runlist = [(cmd, can_resend(cmd))
                            for cmd in self.commands.values()]
             self._send_queued = False
+            self._connection_id = None
             self._connection_transient = False
         for cmd in cancellist:
             self._cancel_command(cmd, True)
@@ -1614,16 +1617,22 @@ class WebSocketSession(object):
                               lambda: self._on_command_sending(cmd),
                               lambda ok: self._on_command_sent(cmd, ok))
 
-    def _submit(self, cmd, early=False):
+    def _submit(self, cmd, early=None):
         """
-        _submit(cmd, early=False) -> Future
+        _submit(cmd, early=None) -> Future or None
 
         Extended version of submit() for use by subclasses. cmd is the Command
-        to be (eventually) sent; early defines whether the command is part of
-        setting up the session and thus should *not* wait until the setup
-        finishes; it is an error to specify early=True if the WebSocketSession
-        is not in the LOGGING_IN state. Returns a Future that resolves or
-        fails to resolve whenever the command is fully processed.
+        to be (eventually) sent; early is either None to indicate that this is
+        a "regular" command, or a connection ID indicating that this is an
+        "early" command pertaining to setting up the named connection. Returns
+        a Future that resolves or fails to resolve whenever the command is
+        fully processed, or None if the command is an invalid early command.
+
+        While a connection is being set up, regular commands are queued until
+        the setup is finished, and early commands bearing the connection's
+        name are sent immediately. Early commands submitted outside of the
+        setup phase of "their" connection are not sent and result in a return
+        value of None.
         """
         def on_future_error(exc, source):
             self._on_error(exc, ERRS_CALLBACK, True)
@@ -1637,10 +1646,10 @@ class WebSocketSession(object):
             if cmd._expects_response:
                 self.commands[cmd.id] = cmd
                 cmd._status_tracker.add_done_cb(remove_cb)
-            if early:
-                if self.state != SST_LOGGING_IN:
-                    raise RuntimeError('May not submit early messages unless '
-                        'logging in')
+            if early is not None:
+                if (self.state != SST_LOGGING_IN or
+                        early != self._connection_id):
+                    return None
                 self._early_queue.append(cmd)
             else:
                 self.queue.append(cmd)
