@@ -1621,20 +1621,20 @@ class WebSocketSession(object):
 
     def _submit(self, cmd, early=None):
         """
-        _submit(cmd, early=None) -> Future or None
+        _submit(cmd, early=None) -> Future
 
         Extended version of submit() for use by subclasses. cmd is the Command
         to be (eventually) sent; early is either None to indicate that this is
         a "regular" command, or a connection ID indicating that this is an
         "early" command pertaining to setting up the named connection. Returns
         a Future that resolves or fails to resolve whenever the command is
-        fully processed, or None if the command is an invalid early command.
+        fully processed.
 
         While a connection is being set up, regular commands are queued until
         the setup is finished, and early commands bearing the connection's
         name are sent immediately. Early commands submitted outside of the
-        setup phase of "their" connection are not sent and result in a return
-        value of None.
+        setup phase of "their" connection result in a RuntimeError being
+        raised.
         """
         def on_future_error(exc, source):
             self._on_error(exc, ERRS_CALLBACK, True)
@@ -1644,17 +1644,18 @@ class WebSocketSession(object):
         with self:
             if cmd._status_tracker is not None:
                 raise RuntimeError('Cannot submit Command more than once')
+            if early is not None and (self.state != SST_LOGGING_IN or
+                                      early != self._connection_id):
+                raise RuntimeError('Submitting an early Command at an '
+                    'inappropriate time')
             cmd._status_tracker = Future(on_error=on_future_error)
             if cmd._expects_response:
                 self.commands[cmd.id] = cmd
                 cmd._status_tracker.add_done_cb(remove_cb)
-            if early is not None:
-                if (self.state != SST_LOGGING_IN or
-                        early != self._connection_id):
-                    return None
-                self._early_queue.append(cmd)
-            else:
+            if early is None:
                 self.queue.append(cmd)
+            else:
+                self._early_queue.append(cmd)
         self._do_submit()
         return cmd._status_tracker
 
