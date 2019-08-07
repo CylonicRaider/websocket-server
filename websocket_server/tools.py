@@ -869,38 +869,44 @@ class Future(object):
 
         Return another Future chained to this one. ok and error are callbacks
         for further processing of success/failure, each taking a single value
-        and returning a Future or an arbitrary value.
+        and returning a Future or an arbitrary value or throwing an exception.
 
         When this Future resolves or fails (whichever happens first), the
-        corresponding callback is called with the resolution/failure value as
-        the only argument, and the return value of that is handled as follows:
-        If it is a Future, the return value of then() is made to
-        resolve/fail whenever the callback's return value resolves/fails,
-        otherwise, the return value of the callback is used to resolve/fail
-        the Future returned from then() (depending on which callback had been
-        called originally).
+        following happens:
+        - If the corresponding callback is None, the returned Future is
+          resolved/failed (correspondingly) with the same value.
+        - Otherwise, the callback is called with the "result" value of this
+          Future as the only positional argument.
+        - If the callback returns a Future, the Future returned from then() is
+          attached to the callback's return value.
+        - If the callback returns a anything else, the Future returned from
+          then() resolved to that.
+        - If the callback raises an exception, the Future returned from then()
+          is failed with it.
         """
-        def attach(link):
-            "Let the outer return value track the resolution status of link."
-            link.add_error_cb(ret.cancel)
-            link.add_done_cb(ret.set)
+        def process(value, callback, fallback):
+            "Implement the callback semantics described in the then() docs."
+            if callback is None:
+                fallback(value)
+                return
+            try:
+                value = callback(value)
+            except Exception as exc:
+                ret.cancel(exc)
+                return
+            if isinstance(value, Future):
+                value.add_error_cb(ret.cancel)
+                value.add_done_cb(ret.set)
+            else:
+                ret.set(value)
         def error_cb(exc):
             "Future chaining support callback (failure version)."
             ret._chain_failed = True
-            if error is not None:
-                exc = error(exc)
-                if isinstance(exc, Future):
-                    return attach(exc)
-            ret.cancel(exc)
+            process(exc, error, ret.cancel)
         def done_cb(value):
             "Future chaining support callback (resolution version)."
-            if ret._chain_failed:
-                return
-            if ok is not None:
-                value = ok(value)
-                if isinstance(value, Future):
-                    return attach(value)
-            ret.set(value)
+            if ret._chain_failed: return
+            process(value, ok, ret.set)
         ret = Future(on_error=self.on_error)
         ret._chain_failed = False
         self.add_error_cb(error_cb)
