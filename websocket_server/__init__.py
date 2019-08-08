@@ -26,10 +26,11 @@ from . import wsfile, cookies, httpserver, server, client, session
 from . import quick
 
 __all__ = constants.__all__ + exceptions.__all__
-__all__ += ['WebSocketFile', 'wrap', 'connect', 'WebSocketRequestHandler']
+__all__ += ['WebSocketFile', 'wrap', 'connect', 'create_connection',
+            'WebSocketRequestHandler']
 
 from .constants import *
 from .exceptions import *
 from .wsfile import WebSocketFile, wrap
-from .client import connect
+from .client import connect, create_connection
 from .server import WebSocketRequestHandler

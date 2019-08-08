@@ -17,7 +17,7 @@ except ImportError: # Py3K
     import http.client as httplib
     from urllib.parse import urlsplit, urlunsplit, urljoin
 
-__all__ = ['connect']
+__all__ = ['connect', 'create_connection']
 
 # HACK
 class TweakHTTPResponse(httplib.HTTPResponse):
@@ -204,3 +204,11 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
             except IOError:
                 pass
         raise
+
+def create_connection(*args, **kwds):
+    """
+    create_connection(...) -> WebSocketFile
+
+    An alias of connect(); see there for details.
+    """
+    return connect(*args, **kwds)
