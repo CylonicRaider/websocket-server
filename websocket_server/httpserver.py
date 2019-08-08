@@ -1054,8 +1054,8 @@ class RoutingRequestHandler(HTTPRequestHandler):
         default implementation logs the exception and returns a plain 500
         response.
         """
-        self.log_error('Exception while handling request: %r', exc,
-                       exc_info=True)
+        self.log_error('Exception while handling request %r: %r',
+                       _log_quote(self.requestline), exc, exc_info=True)
         self.send_500()
 
     def handle_fallback(self):
