@@ -64,14 +64,14 @@ CST_SEND_FAILED = 'SEND_FAILED' # Sending the command failed.
 CST_CONFIRMED   = 'CONFIRMED'   # Command has been responded to.
 CST_CANCELLED   = 'CANCELLED'   # Command has been cancelled.
 
-ERRS_RTHREAD     = 'rthread'     # Fatal uncaught error in reader thread.
-ERRS_WS_CONNECT  = 'ws_connect'  # Exception raised while connecting.
-ERRS_WS_RECV     = 'ws_recv'     # Exception raised while reading from WS.
-ERRS_WS_SEND     = 'ws_send'     # Exception while writing to or closing WS.
-ERRS_SCHEDULER   = 'scheduler'   # Uncaught error in Scheduler task.
-ERRS_SERIALIZE   = 'serialize'   # Error while serializing a Command.
-ERRS_DESERIALIZE = 'deserialize' # Error while deserializing an Event.
-ERRS_CALLBACK    = 'callback'    # Uncaught error in event handler callback.
+ERRS_RTHREAD     = 'RTHREAD'     # Fatal uncaught error in reader thread.
+ERRS_WS_CONNECT  = 'WS_CONNECT'  # Exception raised while connecting.
+ERRS_WS_RECV     = 'WS_RECV'     # Exception raised while reading from WS.
+ERRS_WS_SEND     = 'WS_SEND'     # Exception while writing to or closing WS.
+ERRS_SCHEDULER   = 'SCHEDULER'   # Uncaught error in Scheduler task.
+ERRS_SERIALIZE   = 'SERIALIZE'   # Error while serializing a Command.
+ERRS_DESERIALIZE = 'DESERIALIZE' # Error while deserializing an Event.
+ERRS_CALLBACK    = 'CALLBACK'    # Uncaught error in event handler callback.
 
 SWALLOW_CLASSES_CONNECT = (IOError, ProtocolError)
 SWALLOW_CLASSES_RECV    = (IOError,)
