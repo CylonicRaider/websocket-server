@@ -19,7 +19,7 @@ import hashlib
 from collections import namedtuple
 
 from . import constants
-from .compat import bytearray, bytes, tobytes, unicode
+from .compat import bytearray, bytes, tobytes, unicode, callable
 from .exceptions import ProtocolError, InvalidDataError
 from .exceptions import ConnectionClosedError
 from .tools import mask, new_mask
