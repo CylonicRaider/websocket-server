@@ -20,8 +20,6 @@ otherwise). Each class lists the names of events for which this convention
 applies, and allows setting them by specifying same-named keyword-only
 constructor arguments; unless otherwise noted, the handler callbacks default
 to None.
-
-This module is untested; expect bugs.
 """
 
 import sys, time
