@@ -117,7 +117,7 @@ def backoff_constant(n):
     """
     backoff_constant(n) -> float
 
-    Linear backoff implementation. This returns the constant 1.
+    Constant backoff implementation. This returns the constant 1.
 
     See ReconnectingWebSocket for details.
     """
@@ -127,7 +127,7 @@ def backoff_linear(n):
     """
     backoff_linear(n) -> float
 
-    Quadratic backoff implementation. This returns n.
+    Linear backoff implementation. This returns n.
 
     See ReconnectingWebSocket for details.
     """
