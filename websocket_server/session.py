@@ -1032,8 +1032,8 @@ class WebSocketSession(object):
             response to this Command, does *not* consistute some sort of
             "error" response, and return that.
 
-            The default implementation returns the event's "is_error"
-            attribute without modification.
+            The default implementation returns the event's "is_ok" attribute
+            without modification.
             """
             return evt.is_ok
 
@@ -1155,7 +1155,7 @@ class WebSocketSession(object):
 
     class Event(object):
         """
-        Event(data, connid, id=None, is_ok=False) -> new instance
+        Event(data, connid, id=None, is_ok=True) -> new instance
 
         A message received from the underlying connection of a
         WebSocketSession. data is the payload of the event; connid is the
@@ -1205,9 +1205,9 @@ class WebSocketSession(object):
             """
             return cls(data, connid)
 
-        def __init__(self, data, connid, id=None, is_ok=False):
+        def __init__(self, data, connid, id=None, is_ok=True):
             """
-            __init__(data, connid, id=None, is_ok=False) -> None
+            __init__(data, connid, id=None, is_ok=True) -> None
 
             Instance initializer; see the class docstring for details.
             """
