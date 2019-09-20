@@ -107,7 +107,7 @@ def report_error(exc, source, swallow, output=None):
         buf.append(' %r' % (exc,))
     buf.append('\n')
     if info[1] is not None and not swallow:
-        buf.append('Handler traceback (likely to provide useful context):')
+        buf.append('Handler traceback (likely to provide useful context):\n')
         buf.extend(traceback.format_stack())
         buf.extend(traceback.format_exception(*info))
     output.write(''.join(buf))
