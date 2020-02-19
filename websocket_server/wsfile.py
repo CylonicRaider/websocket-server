@@ -382,6 +382,20 @@ class WebSocketFile(object):
         """
         self._wrfile.flush()
 
+    def _shutdown_raw(self, mode):
+        """
+        _shutdown_raw(mode) -> None
+
+        Perform a shutdown of the underlying socket, if any. mode is a
+        socket.SHUT_* constant denoting the precise mode of shutdown.
+        """
+        s = self._socket
+        if s:
+            try:
+                s.shutdown(mode)
+            except socket.error:
+                pass
+
     def read_single_frame(self):
         """
         read_single_frame() -> (opcode, payload, final, type) or None
@@ -580,6 +594,7 @@ class WebSocketFile(object):
             self.write_single_frame(constants.OP_PONG, cnt)
         elif opcode == constants.OP_CLOSE:
             self._read_close = True
+            self._shutdown_raw(socket.SHUT_RD)
             self.close_ex(*self.parse_close(cnt))
             return False
         return True
@@ -718,12 +733,7 @@ class WebSocketFile(object):
         self._written_close = True
         self._closed = True
         if force or self.close_wrapped:
-            if self._socket:
-                # Allow concurrent reads to finish gracefully.
-                try:
-                    self._socket.shutdown(socket.SHUT_RDWR)
-                except socket.error:
-                    pass
+            self._shutdown_raw(socket.SHUT_RDWR)
             try:
                 self._rdfile.close()
             except IOError:
@@ -779,6 +789,7 @@ class WebSocketFile(object):
                 self.write_single_frame(constants.OP_CLOSE, payload)
                 # Close frame written.
                 self._written_close = True
+                self._shutdown_raw(socket.SHUT_WR)
         # Wait for close if desired.
         if wait:
             with self._rdlock:
