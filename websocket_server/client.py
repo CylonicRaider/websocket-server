@@ -7,6 +7,7 @@ WebSocket client implementation.
 
 import threading
 import base64
+import ssl
 
 from .wsfile import client_handshake, wrap
 
@@ -19,6 +20,77 @@ except ImportError: # Py3K
 
 __all__ = ['connect', 'create_connection']
 
+try: # Py3K, late Py2K
+    # pylint: disable=pointless-statement,no-member
+    ssl.create_default_context
+
+    def create_ssl_context(cert=None, key=None, ca=None):
+        """
+        Create an SSL context using the given configuration.
+
+        cert is a file to read a client certificate from; key is a file
+        containing a private key corresponding to the certificate (if omitted,
+        the key must be located in the certificate file); ca is a file
+        containing trusted CA certificates.
+        """
+        context = ssl.create_default_context(cafile=ca)
+        if cert is not None:
+            context.load_cert_chain(cert, key)
+        return context
+
+    http_connection = httplib.HTTPConnection
+    https_connection = httplib.HTTPSConnection
+
+except AttributeError: # ancient Py2K
+    def create_ssl_context(cert=None, key=None, ca=None):
+        """
+        Create a (fake) SSL context using the given configuration.
+
+        cert is a file to read a client certificate from; key is a file
+        containing a private key corresponding to the certificate (if omitted,
+        the key must be located in the certificate file); ca is a file
+        containing trusted CA certificates.
+
+        These values are passed on to ssl.wrap_socket() by
+        TweakHTTPSConnection.
+        """
+        return {'cert': cert, 'key': key, 'ca': ca}
+
+    class TweakHTTPSConnection(httplib.HTTPSConnection):
+        """
+        TweakHTTPSConnection(..., context=None) -> new instance
+
+        Subclass of httplib.HTTPSConnection working around shortcomings of the
+        standard library implementation.
+        """
+
+        def __init__(self, *args, **kwds):
+            "Store away the SSL \"context\"."
+            self.context = kwds.pop('context', None)
+            httplib.HTTPSConnection.__init__(self, *args, **kwds)
+
+        def connect(self):
+            """
+            Override the default behavior of SSL socket wrapping.
+
+            In addition to a client certificate and a private key, this also
+            allows passing a list of CA certificates, all via the "context".
+            HTTPSConnection's own key_file and cert_file are ignored.
+            """
+            # Yes, we skip HTTPSConnection's implementation.
+            httplib.HTTPConnection.connect(self)
+            if self.context is None:
+                cert, key, ca = None, None, None
+            else:
+                cert = self.context.get('cert')
+                key = self.context.get('key')
+                ca = self.context.get('ca')
+            self.sock = ssl.wrap_socket(self.sock, certfile=cert, keyfile=key,
+                                        ca_certs=ca)
+
+    http_connection = httplib.HTTPConnection
+    https_connection = TweakHTTPSConnection
+
 # HACK
 class TweakHTTPResponse(httplib.HTTPResponse):
     """
@@ -29,7 +101,7 @@ class TweakHTTPResponse(httplib.HTTPResponse):
     """
 
     def __init__(self, *args, **kwds):
-        "Initialize lock"
+        "Initialize lock."
         httplib.HTTPResponse.__init__(self, *args, **kwds)
         self._lock = threading.RLock()
 
@@ -59,10 +131,11 @@ class TweakHTTPResponse(httplib.HTTPResponse):
         with self._lock:
             return httplib.HTTPResponse.close(self)
 
-def connect(url, protos=None, headers=None, cookies=None, **config):
+def connect(url, protos=None, headers=None, cookies=None, ssl_config=None,
+            **config):
     """
-    connect(url, protos=None, headers=None, cookies=None, **config)
-        -> WebSocketFile
+    connect(url, protos=None, headers=None, cookies=None, ssl_config=None,
+            **config) -> WebSocketFile
 
     Connect to the given URL, which is parsed to obtain all necessary
     information. Depending on the scheme (ws or wss), a HTTPConnection or
@@ -84,6 +157,10 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
     format_cookie() methods; the latters are used to submit cookies with
     requests and to interpret the cookies returned with those. If cookies
     is omitted or None, cookies are not processed at all.
+    ssl_config is a mapping containing "cert", "key", and/or "ca" keys,
+    and is used to create an SSL context via the module-level
+    create_ssl_context() function. If this is None instead, the default
+    SSL behavior applies.
     Keyword arguments can be passed the underlying connection constructor
     via config.
     The URL connected to, the HTTP connection, and the HTTP response are
@@ -98,6 +175,9 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
     if headers is None: headers = {}
     # Allow connection reuse; prevent redirect loops.
     conn, connect_count = None, 32
+    # Prepare SSL configuration.
+    if ssl_config is not None:
+        config.setdefault('context', create_ssl_context(**ssl_config))
     # Exceptions can occur anywhere.
     rdfile, wrfile = None, None
     try:
@@ -113,13 +193,11 @@ def connect(url, protos=None, headers=None, cookies=None, **config):
             if conn:
                 pass
             elif purl.scheme == 'ws':
-                conn = httplib.HTTPConnection(purl.hostname, purl.port,
-                                              **config)
+                conn = http_connection(purl.hostname, purl.port, **config)
                 conn.response_class = TweakHTTPResponse
                 conn.connect()
             elif purl.scheme == 'wss':
-                conn = httplib.HTTPSConnection(purl.hostname, purl.port,
-                                               **config)
+                conn = https_connection(purl.hostname, purl.port, **config)
                 conn.response_class = TweakHTTPResponse
                 conn.connect()
             else:
