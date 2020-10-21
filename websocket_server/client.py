@@ -7,8 +7,8 @@ WebSocket client implementation.
 
 import threading
 import base64
-import ssl
 
+from . import ssl_compat
 from .wsfile import client_handshake, wrap
 
 try: # Py2K
@@ -20,42 +20,12 @@ except ImportError: # Py3K
 
 __all__ = ['connect', 'create_connection']
 
-try: # Py3K, late Py2K
-    # pylint: disable=pointless-statement,no-member
-    ssl.create_default_context
-
-    def create_ssl_context(cert=None, key=None, ca=None):
-        """
-        Create an SSL context using the given configuration.
-
-        cert is a file to read a client certificate from; key is a file
-        containing a private key corresponding to the certificate (if omitted,
-        the key must be located in the certificate file); ca is a file
-        containing trusted CA certificates.
-        """
-        context = ssl.create_default_context(cafile=ca)
-        if cert is not None:
-            context.load_cert_chain(cert, key)
-        return context
-
+if ssl_compat.HAS_REAL_CONTEXT:
     http_connection = httplib.HTTPConnection
     https_connection = httplib.HTTPSConnection
 
-except AttributeError: # ancient Py2K
-    def create_ssl_context(cert=None, key=None, ca=None):
-        """
-        Create a (fake) SSL context using the given configuration.
-
-        cert is a file to read a client certificate from; key is a file
-        containing a private key corresponding to the certificate (if omitted,
-        the key must be located in the certificate file); ca is a file
-        containing trusted CA certificates.
-
-        These values are passed on to ssl.wrap_socket() by
-        TweakHTTPSConnection.
-        """
-        return {'cert': cert, 'key': key, 'ca': ca}
-
+else:
+    # Backwards compatibility HACK
     class TweakHTTPSConnection(httplib.HTTPSConnection):
         """
         TweakHTTPSConnection(..., context=None) -> new instance
@@ -79,14 +49,7 @@ except AttributeError: # ancient Py2K
             """
             # Yes, we skip HTTPSConnection's implementation.
             httplib.HTTPConnection.connect(self)
-            if self.context is None:
-                cert, key, ca = None, None, None
-            else:
-                cert = self.context.get('cert')
-                key = self.context.get('key')
-                ca = self.context.get('ca')
-            self.sock = ssl.wrap_socket(self.sock, certfile=cert, keyfile=key,
-                                        ca_certs=ca)
+            self.sock = self.context.wrap_socket(self.sock)
 
     http_connection = httplib.HTTPConnection
     https_connection = TweakHTTPSConnection
@@ -177,7 +140,9 @@ def connect(url, protos=None, headers=None, cookies=None, ssl_config=None,
     conn, connect_count = None, 32
     # Prepare SSL configuration.
     if ssl_config is not None:
-        config.setdefault('context', create_ssl_context(**ssl_config))
+        ssl_context = ssl_compat.create_ssl_context(**ssl_config)
+    else:
+        ssl_context = None
     # Exceptions can occur anywhere.
     rdfile, wrfile = None, None
     try:
@@ -197,7 +162,8 @@ def connect(url, protos=None, headers=None, cookies=None, ssl_config=None,
                 conn.response_class = TweakHTTPResponse
                 conn.connect()
             elif purl.scheme == 'wss':
-                conn = https_connection(purl.hostname, purl.port, **config)
+                conn = https_connection(purl.hostname, purl.port,
+                                        context=ssl_context, **config)
                 conn.response_class = TweakHTTPResponse
                 conn.connect()
             else:
