@@ -140,7 +140,7 @@ def connect(url, protos=None, headers=None, cookies=None, ssl_config=None,
     conn, connect_count = None, 32
     # Prepare SSL configuration.
     if ssl_config is not None:
-        ssl_context = ssl_compat.create_ssl_context(**ssl_config)
+        ssl_context = ssl_compat.create_ssl_context(True, **ssl_config)
     else:
         ssl_context = None
     # Exceptions can occur anywhere.
