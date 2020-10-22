@@ -12,7 +12,7 @@ This module papers over differences across various Py2K/Py3K versions.
 import ssl as _ssl
 
 if hasattr(_ssl, 'create_default_context'): # Modern Py2K, Py3K
-    HAS_REAL_CONTEXT = True
+    HAS_REAL_SSLCONTEXT = True
 
     def create_ssl_context(client_side, cert=None, key=None, ca=None):
         """
@@ -39,7 +39,7 @@ if hasattr(_ssl, 'create_default_context'): # Modern Py2K, Py3K
         return context
 
 elif hasattr(_ssl, 'SSLContext'): # Old Py2K, Py3K
-    HAS_REAL_CONTEXT = True
+    HAS_REAL_SSLCONTEXT = True
 
     def create_ssl_context(client_side, cert=None, key=None, ca=None):
         """
@@ -63,7 +63,7 @@ elif hasattr(_ssl, 'SSLContext'): # Old Py2K, Py3K
         return context
 
 else: # Ancient Py2K, Py3K
-    HAS_REAL_CONTEXT = False
+    HAS_REAL_SSLCONTEXT = False
 
     class SSLContextShim(object):
         """

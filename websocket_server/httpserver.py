@@ -18,6 +18,7 @@ import threading
 
 from .compat import callable, unicode
 from .cookies import RequestHandlerCookies
+from .ssl_compat import create_ssl_context
 from .tools import MONTH_NAMES, format_http_date, parse_http_date, htmlescape
 from .tools import FormData
 
@@ -179,12 +180,29 @@ class OriginHTTPServer(HTTPServer):
     """
 
     def server_bind(self):
-        "Overridden method to provide attitional behavior."
+        "Overridden method to provide HTTP origin tracking."
         HTTPServer.server_bind(self)
         try:
             if self.origin is None: raise AttributeError
         except AttributeError:
             self.origin = guess_origin(self.server_name, self.server_port)
+
+class SSLMixIn(object):
+    """
+    Mix-in class providing optional SSL wrapping.
+
+    If the instance attribute ssl_opts is present and not None when the server
+    is "activated" (which happens during instance construction), it is passed
+    to create_ssl_context(), and the resulting context is used to wrap the
+    server's socket.
+    """
+
+    def server_activate(self):
+        "Overridden method to provide SSL socket wrapping."
+        super(SSLMixIn, self).server_activate()
+        if hasattr(self, 'ssl_opts') and self.ssl_opts is not None:
+            ctx = create_ssl_context(False, **self.ssl_opts)
+            self.socket = ctx.wrap_socket(self.socket, server_side=True)
 
 class ThreadingHTTPServer(ThreadingMixIn, OriginHTTPServer):
     """

@@ -8,7 +8,8 @@ WebSocket client implementation.
 import threading
 import base64
 
-from . import ssl_compat
+from .ssl_compat import HAS_REAL_SSLCONTEXT as _HAS_REAL_SSLCONTEXT
+from .ssl_compat import create_ssl_context
 from .wsfile import client_handshake, wrap
 
 try: # Py2K
@@ -20,7 +21,7 @@ except ImportError: # Py3K
 
 __all__ = ['connect', 'create_connection']
 
-if ssl_compat.HAS_REAL_CONTEXT:
+if _HAS_REAL_SSLCONTEXT:
     http_connection = httplib.HTTPConnection
     https_connection = httplib.HTTPSConnection
 
@@ -140,7 +141,7 @@ def connect(url, protos=None, headers=None, cookies=None, ssl_config=None,
     conn, connect_count = None, 32
     # Prepare SSL configuration.
     if ssl_config is not None:
-        ssl_context = ssl_compat.create_ssl_context(True, **ssl_config)
+        ssl_context = create_ssl_context(True, **ssl_config)
     else:
         ssl_context = None
     # Exceptions can occur anywhere.
