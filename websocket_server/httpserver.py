@@ -201,7 +201,7 @@ class SSLMixIn(object):
         "Overridden method to provide SSL socket wrapping."
         super(SSLMixIn, self).server_activate()
         if hasattr(self, 'ssl_opts') and self.ssl_opts is not None:
-            ctx = create_ssl_context(False, **self.ssl_opts)
+            ctx = create_ssl_context(True, **self.ssl_opts)
             self.socket = ctx.wrap_socket(self.socket, server_side=True)
 
 class ThreadingHTTPServer(ThreadingMixIn, OriginHTTPServer):

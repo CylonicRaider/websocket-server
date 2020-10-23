@@ -14,10 +14,12 @@ import ssl as _ssl
 if hasattr(_ssl, 'create_default_context'): # Modern Py2K, Py3K
     HAS_REAL_SSLCONTEXT = True
 
-    def create_ssl_context(client_side, cert=None, key=None, ca=None):
+    def create_ssl_context(server_side, cert=None, key=None, ca=None):
         """
         Create an SSL context using the given configuration.
 
+        server_side defines the basic behavior (authentication of a remote
+        client if server-side, authentication of a remote server otherwise).
         cert is a file to read a client certificate from; key is a file
         containing a private key corresponding to the certificate (if omitted,
         the key must be located in the certificate file); ca is a file
@@ -27,10 +29,10 @@ if hasattr(_ssl, 'create_default_context'): # Modern Py2K, Py3K
         This implementation uses the secure-by-default
         _ssl.create_default_context().
         """
-        if client_side:
-            purpose = _ssl.Purpose.SERVER_AUTH
-        else:
+        if server_side:
             purpose = _ssl.Purpose.CLIENT_AUTH
+        else:
+            purpose = _ssl.Purpose.SERVER_AUTH
         context = _ssl.create_default_context(purpose, cafile=ca)
         if cert is not None:
             context.load_cert_chain(cert, key)
@@ -41,10 +43,12 @@ if hasattr(_ssl, 'create_default_context'): # Modern Py2K, Py3K
 elif hasattr(_ssl, 'SSLContext'): # Old Py2K, Py3K
     HAS_REAL_SSLCONTEXT = True
 
-    def create_ssl_context(client_side, cert=None, key=None, ca=None):
+    def create_ssl_context(server_side, cert=None, key=None, ca=None):
         """
         Create an SSL context using the given configuration.
 
+        server_side defines the basic behavior (authentication of a remote
+        client if server-side, authentication of a remote server otherwise).
         cert is a file to read a client certificate from; key is a file
         containing a private key corresponding to the certificate (if omitted,
         the key must be located in the certificate file); ca is a file
@@ -52,7 +56,7 @@ elif hasattr(_ssl, 'SSLContext'): # Old Py2K, Py3K
         must authenticate itself).
 
         This implementation uses the SSLContext API directly (for older Python
-        versions).
+        versions). server_side is ignored.
         """
         context = _ssl.SSLContext()
         if cert is not None:
@@ -87,10 +91,12 @@ else: # Ancient Py2K, Py3K
             return _ssl.wrap_socket(sock, server_side=server_side,
                                     **self.params)
 
-    def create_ssl_context(client_side, cert=None, key=None, ca=None):
+    def create_ssl_context(server_side, cert=None, key=None, ca=None):
         """
         Create an SSL context using the given configuration.
 
+        server_side defines the basic behavior (authentication of a remote
+        client if server-side, authentication of a remote server otherwise).
         cert is a file to read a client certificate from; key is a file
         containing a private key corresponding to the certificate (if omitted,
         the key must be located in the certificate file); ca is a file
@@ -99,7 +105,8 @@ else: # Ancient Py2K, Py3K
 
         This implementation returns a shim object that only supports the
         wrap_socket() method with no parameters (but the socket to be
-        wrapped), and is intended for ancient Python releases.
+        wrapped), and is intended for ancient Python releases. server_side
+        is ignored.
         """
         params = {}
         if cert is not None:
