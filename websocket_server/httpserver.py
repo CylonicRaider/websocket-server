@@ -208,7 +208,14 @@ class ThreadingHTTPServer(ThreadingMixIn, OriginHTTPServer):
     """
     Multi-threaded HTTP server with origin support.
 
-    Necessary for parallel use by many clients. Used by the quick module.
+    Necessary for parallel use by many clients.
+    """
+
+class WSSHTTPServer(SSLMixIn, ThreadingHTTPServer):
+    """
+    HTTP server with multi-threading, SSL configuration, and origin tracking.
+
+    This aggregates all (pertinent) functionality from this package.
     """
 
 class FileCache(object):

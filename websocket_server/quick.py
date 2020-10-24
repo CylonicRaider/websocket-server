@@ -9,7 +9,7 @@ import sys
 import argparse
 
 from .server import WebSocketMixIn
-from .httpserver import ThreadingHTTPServer, RoutingRequestHandler
+from .httpserver import WSSHTTPServer, RoutingRequestHandler
 from .httpserver import validate_origin, parse_origin
 
 __all__ = ['RoutingWebSocketRequestHandler', 'run']
@@ -19,10 +19,10 @@ class RoutingWebSocketRequestHandler(RoutingRequestHandler, WebSocketMixIn):
     An HTTP request handler combining all the package's functionality.
     """
 
-def run(handler, server=ThreadingHTTPServer, prepare=None, postparse=None,
+def run(handler, server=WSSHTTPServer, prepare=None, postparse=None,
         premain=None):
     """
-    run(handler, server=ThreadingHTTPServer, prepare=None, postparse=None,
+    run(handler, server=WSSHTTPServer, prepare=None, postparse=None,
         premain=None) -> None
 
     Actually run a WebSocket server instance.

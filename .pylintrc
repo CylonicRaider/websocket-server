@@ -13,6 +13,10 @@ bad-functions=
 variable-rgx=[a-z_][a-z0-9_]*$
 docstring-min-length=3
 
+[DESIGN]
+
+max-parents=10
+
 [FORMAT]
 
 max-line-length=78
