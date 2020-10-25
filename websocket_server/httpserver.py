@@ -191,18 +191,24 @@ class SSLMixIn(object):
     """
     Mix-in class providing optional SSL wrapping.
 
-    If the instance attribute ssl_opts is present and not None when the server
-    is "activated" (which happens during instance construction), it is passed
-    to create_ssl_context(), and the resulting context is used to wrap the
-    server's socket.
+    Use the setup_ssl() method to convert the server into an SSL server.
     """
 
-    def server_activate(self):
-        "Overridden method to provide SSL socket wrapping."
-        super(SSLMixIn, self).server_activate()
-        if hasattr(self, 'ssl_opts') and self.ssl_opts is not None:
-            ctx = create_ssl_context(True, **self.ssl_opts)
-            self.socket = ctx.wrap_socket(self.socket, server_side=True)
+    def setup_ssl(self, ssl_opts):
+        """
+        setup_ssl(ssl_opts) -> None
+
+        ssl_opts is a mapping of arguments as passed to create_ssl_context(),
+        and is used to create an SSL context that is used to wrap the server's
+        socket. If this is None, no SSL initialization is performed.
+
+        If this method is called multiple times, the server will require
+        multiple "nested" TLS handshakes to operate. As the utility of that
+        appears questionable, this should not be called more than once.
+        """
+        if ssl_opts is None: return
+        ctx = create_ssl_context(True, **ssl_opts)
+        self.socket = ctx.wrap_socket(self.socket, server_side=True)
 
 class ThreadingHTTPServer(ThreadingMixIn, OriginHTTPServer):
     """
