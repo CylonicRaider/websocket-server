@@ -194,20 +194,21 @@ class SSLMixIn(object):
     Use the setup_ssl() method to convert the server into an SSL server.
     """
 
-    def setup_ssl(self, ssl_opts):
+    def setup_ssl(self, ssl_config):
         """
-        setup_ssl(ssl_opts) -> None
+        setup_ssl(ssl_config) -> None
 
-        ssl_opts is a mapping of arguments as passed to create_ssl_context(),
-        and is used to create an SSL context that is used to wrap the server's
-        socket. If this is None, no SSL initialization is performed.
+        ssl_config is a mapping of arguments as passed to
+        create_ssl_context(), and is used to create an SSL context that is
+        used to wrap the server's socket. If this is None, no SSL
+        initialization is performed.
 
         If this method is called multiple times, the server will require
-        multiple "nested" TLS handshakes to operate. As the utility of that
+        multiple "nested" SSL handshakes to operate. As the utility of that
         appears questionable, this should not be called more than once.
         """
-        if ssl_opts is None: return
-        ctx = create_ssl_context(True, **ssl_opts)
+        if ssl_config is None: return
+        ctx = create_ssl_context(True, **ssl_config)
         self.socket = ctx.wrap_socket(self.socket, server_side=True)
 
 class ThreadingHTTPServer(ThreadingMixIn, OriginHTTPServer):
