@@ -19,6 +19,22 @@ class RoutingWebSocketRequestHandler(RoutingRequestHandler, WebSocketMixIn):
     An HTTP request handler combining all the package's functionality.
     """
 
+def tls_flags(s):
+    """
+    Parse a comma-separated key-value list as used for command-line TLS
+    configuration.
+
+    Returns a dictionary of the key-value pairs recovered from s.
+    """
+    ret = {}
+    for item in s.split(','):
+        if not item: continue
+        key, sep, value = item.partition('=')
+        if not sep: raise ValueError('Invalid key-value pair %r' % (item,))
+        if key in ret: raise ValueError('Duplicate key %r' % (key,))
+        ret[key] = value
+    return ret
+
 def run(handler, server=WSSHTTPServer, prepare=None, postparse=None,
         premain=None):
     """
@@ -54,16 +70,26 @@ def run(handler, server=WSSHTTPServer, prepare=None, postparse=None,
     p = argparse.ArgumentParser()
     p.add_argument('--port', '-p', metavar='PORT', type=int,
                    help='The TCP port to run on (defaults to the port from '
-                       'the origin, or 8080).')
+                        'the origin, or 8080).')
     p.add_argument('--host', '-s', metavar='IP',
                    help='The network interface to bind to (defaults to the '
-                       'host from the origin, or any interface).')
+                        'host from the origin, or all interfaces).')
     p.add_argument('--origin', '-O', type=origin,
                    help='A SCHEME://HOST[:PORT] string indicating how '
-                       'clients should access this server. If omitted, '
-                       'an attempt is made to guess the value from the '
-                       '--host and --port parameters; if that fails, this '
-                       'remains unset.')
+                        'clients should access this server. If omitted, '
+                        'an attempt is made to guess the value from the '
+                        '--host and --port parameters; if that fails, this '
+                        'remains unset.')
+    p.add_argument('--tls', '-T', metavar='PARAM=VALUE[,...]', type=tls_flags,
+                   help='Enable (mandatory) TLS, and configure it. The '
+                        'following parameters are defined: "cert": A file '
+                        'containing X.509 certificate in PEM format, along '
+                        'with a CA certificate chain as necessary, to be '
+                        'used by the server; "key": The private key file '
+                        'belonging to cert (if omitted, the private key is '
+                        'taken from the certificate file); "ca": Require '
+                        'clients to be authenticated by one of the '
+                        'certificates in this file.')
     # Call preparation callback.
     if prepare: prepare(p)
     # Actually parse arguments.
@@ -81,6 +107,7 @@ def run(handler, server=WSSHTTPServer, prepare=None, postparse=None,
     # Create server.
     httpd = server((arguments.host, arguments.port), handler)
     if arguments.origin: httpd.origin = arguments.origin
+    if arguments.tls: httpd.setup_ssl(arguments.tls)
     # Print header message.
     # Since the server has bound itself when it was contructed above, we can
     # insert the final origin value.
