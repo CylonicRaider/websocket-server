@@ -187,7 +187,7 @@ class OriginHTTPServer(HTTPServer):
         except AttributeError:
             self.origin = guess_origin(self.server_name, self.server_port)
 
-class SSLMixIn(object):
+class SSLMixIn: # pylint: disable=old-style-class
     """
     Mix-in class providing optional SSL wrapping.
 
