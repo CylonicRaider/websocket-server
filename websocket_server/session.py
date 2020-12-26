@@ -147,35 +147,40 @@ def backoff_exponential(n):
 
 class ReconnectingWebSocket(object):
     """
-    ReconnectingWebSocket(url, protos=None, cookies=None, on_*=None)
-        -> new instance
+    ReconnectingWebSocket(url, protos=None, cookies=None, ssl_config=None,
+                          on_*=None) -> new instance
 
     An automatically reconnecting WebSocket wrapper. url is the WebSocket
     URL to connect to. protos is an indication on which WebSocket subprotocols
     may be used. cookies is a cookies.CookieJar instance that is used to
-    store/retrieve cookies, or None for no cookie management. on_* allow
-    setting event handler callbacks; see below.
+    store/retrieve cookies, or None for no cookie management. ssl_config is
+    used for custom SSL configuration. on_* allow setting event handler
+    callbacks; see below.
 
     Instance attributes are:
-    url    : The URL to connect to. Initialized from the same-named
-             constructor parameter. May be modified after instance creation to
-             cause future connections to use that URL (but see reconnect() for
-             a safer way of achieving that).
-    protos : Which WebSocket subprotocols may be used. May be None, a single
-             string, or a list of strings. See client.connect() for more
-             details. Initialized from the same-named constructor parameter.
-    cookies: A cookies.CookieJar instance (or anything with a compatible
-             interface; see client.connect()) to use for cookie management,
-             or None for no cookie management. Initialized from the same-named
-             constructor parameter.
-    backoff: The connection backoff algorithm to use. Defaults to
-             backoff_linear(). This is a function mapping an integer to a
-             floating value; the parameter is the (zero-based) index of the
-             current connection attempt (that has failed), while the return
-             value is the time (in seconds) to wait until the next connection
-             attempt. The index is reset when a connection attempt succeeds.
-             The backoff_*() module-level functions provide a few ready-to-use
-             implementations to plug into this.
+    url       : The URL to connect to. Initialized from the same-named
+                constructor parameter. May be modified after instance creation
+                to cause future connections to use that URL (but see
+                reconnect() for a safer way of achieving that).
+    protos    : Which WebSocket subprotocols may be used. May be None, a
+                single string, or a list of strings. See client.connect() for
+                more details. Initialized from the same-named constructor
+                parameter.
+    cookies   : A cookies.CookieJar instance (or anything with a compatible
+                interface; see client.connect()) to use for cookie management,
+                or None for no cookie management. Initialized from the
+                same-named constructor parameter.
+    ssl_config: A dictionary of SSL configuration as used by client.connect(),
+                or None for default settings. Initialized from the same-named
+                constructor parameter.
+    backoff   : The connection backoff algorithm to use. Defaults to
+                backoff_linear(). This is a function mapping an integer to a
+                floating value; the parameter is the (zero-based) index of the
+                current connection attempt (that has failed), while the return
+                value is the time (in seconds) to wait until the next
+                connection attempt. The index is reset when a connection
+                attempt succeeds. The backoff_*() module-level functions
+                provide a few ready-to-use implementations to plug into this.
 
     Read-only instance attributes are:
     state     : The current connection state as one of the RWST_* constants.
@@ -256,9 +261,10 @@ class ReconnectingWebSocket(object):
 
     USE_WTHREAD = True
 
-    def __init__(self, url, protos=None, cookies=None, on_connecting=None,
-                 on_connected=None, on_message=None, on_disconnecting=None,
-                 on_disconnected=None, on_error=report_error):
+    def __init__(self, url, protos=None, cookies=None, ssl_config=None,
+                 on_connecting=None, on_connected=None, on_message=None,
+                 on_disconnecting=None, on_disconnected=None,
+                 on_error=report_error):
         """
         __init__(url, protos=None, cookies=None, on_*=None) -> None
 
@@ -267,6 +273,7 @@ class ReconnectingWebSocket(object):
         self.url = url
         self.protos = protos
         self.cookies = cookies
+        self.ssl_config = ssl_config
         self.backoff = backoff_linear
         self.on_connecting = on_connecting
         self.on_connected = on_connected
@@ -550,18 +557,20 @@ class ReconnectingWebSocket(object):
         held and should therefore finish quickly.
         """
         return {'url': self.url, 'protos': self.protos,
-                'cookies': self.cookies}
+                'cookies': self.cookies, 'ssl_config': self.ssl_config}
 
-    def _do_connect(self, url, protos, cookies):
+    def _do_connect(self, url, protos, cookies, ssl_config):
         """
-        _do_connect(url, protos, cookies) -> WebSocketFile
+        _do_connect(url, protos, cookies, ssl_config) -> WebSocketFile
 
         Actually establish a WebSocket connection and return it. url is the
         WebSocket URL to connect to. protos is an indication on which
         subprotocols to use (see the same-named instance attribute for
         details). cookies is a cookies.CookieJar instance or None and used
         for cookie management; see the same-named instance attribute for
-        details. Overriding methods may specify additional parameters.
+        details. ssl_config is a dictionary of SSL configuration; see the
+        same-named instance attribute for details. Overriding methods may
+        specify additional parameters.
 
         The return value is expected to be a valid WebSocketFile with an "id"
         attribute containing a comparable and hashable object that uniquely
@@ -574,7 +583,8 @@ class ReconnectingWebSocket(object):
         URL) should be retrieved in _conn_params() instead; see there for
         more details.
         """
-        conn = client.connect(url, protos, cookies=cookies)
+        conn = client.connect(url, protos, cookies=cookies,
+                              ssl_config=ssl_config)
         conn.id = uuid.uuid4()
         return conn
 
@@ -1217,18 +1227,20 @@ class WebSocketSession(object):
             self.is_ok = is_ok
 
     @classmethod
-    def create(cls, url, protos=None, cookies=None, **kwds):
+    def create(cls, url, protos=None, cookies=None, ssl_config=None, **kwds):
         """
         create(url, protos=None, cookies=None, **kwds) -> new instance
 
         Create a new WebSocketSession along with a new enclosed
-        ReconnectingWebSocket. url, protos, and cookies are forwarded to the
-        ReconnectingWebSocket constructor; other keyword arguments are
-        forwarded to the WebSocketSession constructor. The actually
-        instantiated "nested" class is defined by the "Connection" class
-        attribute; unless overridden, it defaults to ReconnectingWebSocket.
+        ReconnectingWebSocket. url, protos, cookies, and ssl_config are
+        forwarded to the ReconnectingWebSocket constructor; other keyword
+        arguments are forwarded to the WebSocketSession constructor. The
+        actually instantiated "nested" class is defined by the "Connection"
+        class attribute; unless overridden, it defaults to
+        ReconnectingWebSocket.
         """
-        return cls(cls.Connection(url, protos, cookies=cookies), **kwds)
+        return cls(cls.Connection(url, protos, cookies=cookies,
+                                  ssl_config=ssl_config), **kwds)
 
     def __init__(self, conn, scheduler=None, on_connected=None,
                  on_logged_in=None, on_event=None, on_disconnecting=None,
