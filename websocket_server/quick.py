@@ -12,7 +12,10 @@ from .server import WebSocketMixIn
 from .httpserver import WSSHTTPServer, RoutingRequestHandler
 from .httpserver import validate_origin, parse_origin
 
-__all__ = ['RoutingWebSocketRequestHandler', 'run']
+__all__ = ['DEFAULT_ADDRESS', 'RoutingWebSocketRequestHandler', 'tls_flags',
+           'resolve_listen_address', 'run']
+
+DEFAULT_ADDRESS = ('', 8080)
 
 class RoutingWebSocketRequestHandler(RoutingRequestHandler, WebSocketMixIn):
     """
@@ -34,6 +37,32 @@ def tls_flags(s):
         if key in ret: raise ValueError('Duplicate key %r' % (key,))
         ret[key] = value
     return ret
+
+def resolve_listen_address(addr, origin, default_addr=None):
+    """
+    resolve_listen_address(addr, origin, default_addr=None)
+        -> (host, port)
+
+    Fill in default host and port values into an address an HTTP server should
+    ultimately listen at.
+
+    addr         is a (host, port) tuple with explicit values. If any of host
+                 or port is None, a default value is derived for it from
+                 origin or default_addr.
+    origin       is a Web origin that is consulted for default host/port
+                 values (if not None; if this is None, default_addr is used
+                 instead).
+    default_addr is the ultimate fallback (host, port) tuple, and defaults to
+                 the module-level DEFAULT_ADDRESS constant, viz. ('', 8080).
+
+    Returns the (host, port) tuple with defaults filled in.
+    """
+    if default_addr is None: default_addr = DEFAULT_ADDRESS
+    host, port = addr
+    if origin: default_addr = parse_origin(origin)[1:]
+    if host is None: host = default_addr[0]
+    if port is None: port = default_addr[1]
+    return (host, port)
 
 def run(handler, server=WSSHTTPServer, prepare=None, postparse=None,
         premain=None):
@@ -95,13 +124,8 @@ def run(handler, server=WSSHTTPServer, prepare=None, postparse=None,
     # Actually parse arguments.
     arguments = p.parse_args()
     # Resolve complex defaults.
-    if arguments.origin:
-        _, host, port = parse_origin(arguments.origin)
-        if arguments.host is None: arguments.host = host
-        if arguments.port is None: arguments.port = port
-    else:
-        if arguments.host is None: arguments.host = ''
-        if arguments.port is None: arguments.port = 8080
+    arguments.host, arguments.port = resolve_listen_address(
+        (arguments.host, arguments.port), arguments.origin)
     # Call next preparation callback.
     if postparse: postparse(arguments)
     # Create server.
