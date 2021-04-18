@@ -59,7 +59,8 @@ function init() {
 }
 // High-level connection function.
 function connect() {
-  connectTo("ws://" + document.location.host + "/" +
+  var scheme = (document.location.protocol == "https:") ? "wss" : "ws";
+  connectTo(scheme + "://" + document.location.host + "/" +
     ((echoMode.checked) ? "echo" : "chat"));
 }
 // Low-level connection function.
