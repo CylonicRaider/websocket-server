@@ -19,6 +19,11 @@ try: # Py2K
 except ImportError: # Py3K
     from urllib.parse import parse_qsl
 
+try: # Py2K; old Py3K
+    from collections import MutableMapping
+except ImportError: # Recent Py3K
+    from collections.abc import MutableMapping
+
 __all__ = ['MONTH_NAMES', 'mask', 'new_mask', 'format_http_date',
            'parse_http_date', 'htmlescape', 'spawn_thread_ex', 'spawn_thread',
            'spawn_daemon_thread', 'CaseDict', 'FormData', 'AtomicSequence',
@@ -122,7 +127,7 @@ def spawn_daemon_thread(_func, *_args, **_kwds):
     """
     return spawn_thread_ex(_func, _args, _kwds, daemon=True)
 
-class CaseDict(collections.MutableMapping):
+class CaseDict(MutableMapping):
     """
     CaseDict(source=(), **update) -> new instance
 
